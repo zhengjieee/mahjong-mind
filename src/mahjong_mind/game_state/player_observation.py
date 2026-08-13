@@ -31,6 +31,7 @@ class PlayerObservation:
     match_id: str
     observer: PlayerId
     names: tuple[str, str, str, str]
+    aka_flag: bool
     hand_index: int
     bakaze: Wind
     kyoku: int
@@ -83,6 +84,7 @@ def observation_for_player(
         match_id=state.match_id,
         observer=observer,
         names=state.names,
+        aka_flag=state.aka_flag,
         hand_index=hand.hand_index,
         bakaze=hand.bakaze,
         kyoku=hand.kyoku,

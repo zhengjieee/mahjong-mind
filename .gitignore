@@ -219,3 +219,6 @@ __marimo__/
 
 # Inspection of raw data files
 data/raw/
+
+# Generated model datasets
+data/processed/
