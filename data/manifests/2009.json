@@ -1,0 +1,62 @@
+{
+  "dataset": "Tenhou Houou Room MJAI Dataset",
+  "source_year": 2009,
+  "release": {
+    "repository": "https://github.com/NikkeTryHard/tenhou-to-mjai",
+    "tag": "v2.0.0",
+    "asset": "2009.zip",
+    "license": "CC BY 4.0"
+  },
+  "archive": {
+    "sha256": "8c4423b9abf80f6596ac9fe99db433de48602a654b824fa32f864cbf87ca8da0",
+    "size_bytes": 31863271,
+    "extracted_file_count": 6897,
+    "extracted_compressed_size_bytes": 30470055
+  },
+  "validation": {
+    "matches": 6897,
+    "hands": 74228,
+    "events": 7486795,
+    "parse_errors": 0,
+    "structure_errors": 0
+  },
+  "exclusions": {
+    "rule": "Exclude matches where any start_game player name begins with EXAMPLE.",
+    "files": [
+      "2009020103gm-00a9-0000-2453a04c.mjson",
+      "2009020103gm-00a9-0000-47e70b77.mjson"
+    ]
+  },
+  "usable_data": {
+    "matches": 6895,
+    "hands": 74186,
+    "events": 7480785,
+    "event_counts": {
+      "ankan": 2975,
+      "chi": 63232,
+      "dahai": 3550462,
+      "daiminkan": 491,
+      "dora": 5290,
+      "end_game": 6895,
+      "end_kyoku": 74186,
+      "hora": 62932,
+      "kakan": 1892,
+      "pon": 84908,
+      "reach": 51782,
+      "reach_accepted": 49905,
+      "ryukyoku": 11690,
+      "start_game": 6895,
+      "start_kyoku": 74186,
+      "tsumo": 3433064
+    }
+  },
+  "benchmark": {
+    "scope": "First 1,000 sorted non-EXAMPLE matches",
+    "python_version": "3.12.13",
+    "elapsed_seconds": 1.115,
+    "matches_per_second": 896.63,
+    "events_per_second": 985807,
+    "peak_process_memory_mib": 35.0,
+    "note": "Local single-run measurement; throughput varies by machine and run."
+  }
+}
