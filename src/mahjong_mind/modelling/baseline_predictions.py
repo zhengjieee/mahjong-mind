@@ -10,7 +10,7 @@ from typing import Protocol
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
-from mahjong_mind.modeling.metrics_evaluation import (
+from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
     PolicyPrediction,
     RankingMetrics,

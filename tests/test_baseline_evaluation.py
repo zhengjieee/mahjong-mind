@@ -2,11 +2,11 @@ import math
 
 import pytest
 
-from mahjong_mind.modeling.baseline_predictions import (
+from mahjong_mind.modelling.baseline_predictions import (
     MostCommonLegalBaseline,
     RandomLegalBaseline,
 )
-from mahjong_mind.modeling.metrics_evaluation import (
+from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
     PolicyPrediction,
     RankingMetricsAccumulator,
