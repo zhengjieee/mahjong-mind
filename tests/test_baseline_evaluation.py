@@ -2,6 +2,7 @@ import math
 
 import pytest
 
+from mahjong_mind.mjai.events import Tile
 from mahjong_mind.modelling.baseline_predictions import (
     MostCommonLegalBaseline,
     RandomLegalBaseline,
@@ -10,6 +11,10 @@ from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
     PolicyPrediction,
     RankingMetricsAccumulator,
+)
+from mahjong_mind.modelling.tile_efficiency import (
+    calculate_shanten,
+    tiles_to_34_counts,
 )
 
 
@@ -69,3 +74,28 @@ def test_baselines_only_rank_legal_actions_with_valid_probabilities() -> None:
     assert prediction.probabilities[0] > prediction.probabilities[2]
     assert prediction.probabilities[34] > 0.0
     assert sum(prediction.probabilities) == pytest.approx(1.0)
+
+
+def test_shanten_adapter_normalizes_red_fives() -> None:
+    complete_hand: tuple[Tile, ...] = (
+        "1m",
+        "2m",
+        "3m",
+        "1p",
+        "2p",
+        "3p",
+        "1s",
+        "2s",
+        "3s",
+        "E",
+        "E",
+        "E",
+        "5pr",
+        "5p",
+    )
+
+    counts = tiles_to_34_counts(complete_hand)
+
+    assert len(counts) == 34
+    assert counts[13] == 2
+    assert calculate_shanten(complete_hand) == -1
