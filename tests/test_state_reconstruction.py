@@ -20,6 +20,11 @@ from mahjong_mind.mjai.events import (
     TsumoEvent,
 )
 from mahjong_mind.mjai.parser import ParsedEvent
+from mahjong_mind.modelling.tile_efficiency import (
+    TileEfficiencyBaseline,
+    known_tiles_from_observation,
+    tiles_to_34_counts,
+)
 
 
 def start_game() -> StartGameEvent:
@@ -103,6 +108,14 @@ def test_reconstructs_draw_discard_and_pon() -> None:
     assert hand.last_discard is not None
     assert hand.last_discard.tile == "1p"
 
+    observation = observation_for_player(state, 1)
+    known_tiles = known_tiles_from_observation(observation)
+    known_counts = tiles_to_34_counts(known_tiles)
+
+    assert len(known_tiles) == 15
+    assert known_counts[9] == 1
+    assert known_counts[31] == 3
+
 
 def test_rejects_a_fifth_copy_of_a_tile() -> None:
     reconstructor = StateReconstructor(validate_after_event=True)
@@ -153,6 +166,8 @@ def test_observation_hides_opponents_hands_and_is_a_snapshot() -> None:
         )
 
     observation = observation_for_player(state, 0)
+    legal_mask = legal_discard_mask(observation)
+    tile_efficiency_prediction = TileEfficiencyBaseline().predict(observation)
 
     assert state.current_hand is not None
     assert observation.own_hand == tuple(
@@ -161,6 +176,17 @@ def test_observation_hides_opponents_hands_and_is_a_snapshot() -> None:
     assert observation.own_last_draw == "N"
     assert not hasattr(observation.players[1], "concealed_tiles")
     assert observation.players[1].concealed_tile_count == 13
+    assert set(tile_efficiency_prediction.ranked_actions) == {
+        action for action, is_legal in enumerate(legal_mask) if is_legal
+    }
+    assert sum(tile_efficiency_prediction.probabilities) == pytest.approx(1.0)
+    assert all(
+        probability > 0.0 if is_legal else probability == 0.0
+        for probability, is_legal in zip(
+            tile_efficiency_prediction.probabilities,
+            legal_mask,
+        )
+    )
 
     reconstructor.apply(
         ParsedEvent(

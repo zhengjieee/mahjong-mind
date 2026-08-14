@@ -14,7 +14,10 @@ from mahjong_mind.modelling.metrics_evaluation import (
 )
 from mahjong_mind.modelling.tile_efficiency import (
     calculate_shanten,
+    rank_discards_by_tile_efficiency,
+    shanten_after_legal_discards,
     tiles_to_34_counts,
+    ukeire_after_legal_discards,
 )
 
 
@@ -99,3 +102,31 @@ def test_shanten_adapter_normalizes_red_fives() -> None:
     assert len(counts) == 34
     assert counts[13] == 2
     assert calculate_shanten(complete_hand) == -1
+
+    discard_shanten = shanten_after_legal_discards(
+        complete_hand,
+        legal_mask(13, 35),
+    )
+
+    assert len(discard_shanten) == ACTION_COUNT
+    assert discard_shanten[13] == 0
+    assert discard_shanten[35] == 0
+    assert discard_shanten[0] is None
+
+    discard_ukeire = ukeire_after_legal_discards(
+        complete_hand,
+        legal_mask(13, 35),
+        known_tiles=complete_hand,
+    )
+
+    assert discard_ukeire[13] == 2
+    assert discard_ukeire[35] == 2
+    assert discard_ukeire[0] is None
+
+    ranked_actions = rank_discards_by_tile_efficiency(
+        complete_hand,
+        legal_mask(0, 13, 35),
+        known_tiles=complete_hand,
+    )
+
+    assert ranked_actions == (0, 13, 35)

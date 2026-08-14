@@ -5,17 +5,19 @@ from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
+from mahjong_mind.mjai.events import Tile
 from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
     PolicyPrediction,
     RankingMetrics,
     RankingMetricsAccumulator,
 )
+from mahjong_mind.modelling.tile_efficiency import TileEfficiencyBaseline
 
 
 class BaselineError(ValueError):
@@ -153,6 +155,71 @@ def evaluate_baselines(
     return {name: accumulator.compute() for name, accumulator in accumulators.items()}
 
 
+def evaluate_tile_efficiency_baseline(
+    dataset_directory: Path,
+    *,
+    max_decisions: int | None = None,
+) -> RankingMetrics:
+    """Evaluate tile efficiency from observable Parquet fields."""
+    baseline = TileEfficiencyBaseline()
+    accumulator = RankingMetricsAccumulator()
+    for hand, legal_mask, known_tiles, label_index in (
+        _iter_tile_efficiency_examples(
+            dataset_directory,
+            max_decisions=max_decisions,
+        )
+    ):
+        prediction = baseline.predict_tiles(hand, legal_mask, known_tiles)
+        accumulator.update(prediction, label_index, legal_mask)
+    return accumulator.compute()
+
+
+def _iter_tile_efficiency_examples(
+    dataset_directory: Path,
+    *,
+    max_decisions: int | None = None,
+) -> Iterator[tuple[tuple[Tile, ...], tuple[bool, ...], tuple[Tile, ...], int]]:
+    if max_decisions is not None and max_decisions < 1:
+        raise BaselineError("max_decisions must be at least 1")
+    shard_paths = sorted(dataset_directory.glob("source_year=*/part-*.parquet"))
+    if not shard_paths:
+        raise BaselineError(f"No Parquet shards found in {dataset_directory}")
+
+    yielded = 0
+    columns = [
+        "own_hand",
+        "dora_markers",
+        "players",
+        "legal_discard_mask",
+        "label_index",
+    ]
+    for path in shard_paths:
+        parquet = pq.ParquetFile(path)
+        for batch in parquet.iter_batches(columns=columns, batch_size=4_096):
+            for row in batch.to_pylist():
+                if max_decisions is not None and yielded >= max_decisions:
+                    return
+                hand = tuple(row["own_hand"])
+                known_tiles = _known_tiles_from_parquet_row(row)
+                yield hand, tuple(row["legal_discard_mask"]), known_tiles, row[
+                    "label_index"
+                ]
+                yielded += 1
+
+
+def _known_tiles_from_parquet_row(row: dict[str, Any]) -> tuple[Tile, ...]:
+    known_tiles = [*row["own_hand"], *row["dora_markers"]]
+    for player in row["players"]:
+        known_tiles.extend(
+            discard["tile"]
+            for discard in player["discards"]
+            if not discard["called"]
+        )
+        for meld in player["melds"]:
+            known_tiles.extend(meld["tiles"])
+    return tuple(known_tiles)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate simple legal-discard baselines on a Parquet dataset."
@@ -165,6 +232,11 @@ def main() -> None:
     )
     parser.add_argument("--limit", type=int, dest="max_decisions")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--tile-efficiency",
+        action="store_true",
+        help="Also evaluate the shanten-and-ukeire baseline.",
+    )
     args = parser.parse_args()
 
     fit_directory = args.frequency_fit_dataset or args.dataset_directory
@@ -179,6 +251,11 @@ def main() -> None:
             max_decisions=args.max_decisions,
         ),
     )
+    if args.tile_efficiency:
+        metrics["tile_efficiency"] = evaluate_tile_efficiency_baseline(
+            args.dataset_directory,
+            max_decisions=args.max_decisions,
+        )
     same_dataset = fit_directory.resolve() == args.dataset_directory.resolve()
     report = {
         "evaluation_dataset": str(args.dataset_directory),
