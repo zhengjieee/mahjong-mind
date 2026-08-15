@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: >-
+          python -m pip install
+          mahjong==2.0.0
+          mypy==2.3.0
+          pyarrow==25.0.1
+          pydantic==2.13.4
+          pytest==9.1.1
+          ruff==0.16.2
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Run Ruff
+        run: python -m ruff check src tests
+
+      - name: Run mypy
+        run: python -m mypy src tests
