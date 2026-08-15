@@ -1,11 +1,15 @@
+import json
 import math
+from pathlib import Path
 
 import pytest
 
+from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
 from mahjong_mind.mjai.events import Tile
 from mahjong_mind.modelling.baseline_predictions import (
     MostCommonLegalBaseline,
     RandomLegalBaseline,
+    fit_most_common_baseline,
 )
 from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
@@ -77,6 +81,21 @@ def test_baselines_only_rank_legal_actions_with_valid_probabilities() -> None:
     assert prediction.probabilities[0] > prediction.probabilities[2]
     assert prediction.probabilities[34] > 0.0
     assert sum(prediction.probabilities) == pytest.approx(1.0)
+
+
+def test_frequency_baseline_uses_manifest_counts(tmp_path: Path) -> None:
+    action_counts = {tile: 0 for tile in DISCARD_TILE_TYPES}
+    action_counts["1m"] = 3
+    action_counts["2m"] = 1
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"records": {"action_counts": action_counts}}),
+        encoding="utf-8",
+    )
+
+    baseline = fit_most_common_baseline(tmp_path)
+
+    assert baseline.action_counts[0] == 3
+    assert baseline.action_counts[1] == 1
 
 
 def test_shanten_adapter_normalizes_red_fives() -> None:

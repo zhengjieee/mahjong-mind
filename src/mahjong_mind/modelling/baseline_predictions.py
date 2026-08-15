@@ -135,6 +135,19 @@ def fit_most_common_baseline(
     dataset_directory: Path,
 ) -> MostCommonLegalBaseline:
     """Fit global discard frequencies from a dataset's label column."""
+    manifest_path = dataset_directory / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            action_counts = manifest["records"]["action_counts"]
+            return MostCommonLegalBaseline(
+                tuple(action_counts[tile] for tile in DISCARD_TILE_TYPES)
+            )
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise BaselineError(
+                f"Invalid action counts in {manifest_path}"
+            ) from error
+
     return MostCommonLegalBaseline.fit(
         label for _, label in iter_parquet_examples(dataset_directory)
     )
