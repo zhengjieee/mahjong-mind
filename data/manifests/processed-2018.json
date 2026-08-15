@@ -1,0 +1,123 @@
+{
+  "dataset": "MahjongMind discard decisions",
+  "source_year": 2018,
+  "purpose": "validation and model selection",
+  "source": {
+    "excluded_matches": [],
+    "file_set_sha256": "fa297fa7eac2966f829c56ebc2d3c81e7fe188a8d3a4ad0f6dce5e7172d7dece",
+    "files_scanned": 173546,
+    "years": [
+      2018
+    ]
+  },
+  "format": {
+    "compression": "zstd",
+    "type": "parquet"
+  },
+  "schema": {
+    "version": "1",
+    "representation_version": "structured-observation-v1",
+    "sha256": "a877c3c6a3b58b7fa3f8632a9cd85ced8d02b92df01901449f9d0d7ad5dd1e5d",
+    "discard_action_order": [
+      "1m",
+      "2m",
+      "3m",
+      "4m",
+      "5m",
+      "6m",
+      "7m",
+      "8m",
+      "9m",
+      "1p",
+      "2p",
+      "3p",
+      "4p",
+      "5p",
+      "6p",
+      "7p",
+      "8p",
+      "9p",
+      "1s",
+      "2s",
+      "3s",
+      "4s",
+      "5s",
+      "6s",
+      "7s",
+      "8s",
+      "9s",
+      "E",
+      "S",
+      "W",
+      "N",
+      "P",
+      "F",
+      "C",
+      "5mr",
+      "5pr",
+      "5sr"
+    ]
+  },
+  "records": {
+    "action_counts": {
+      "1m": 3559795,
+      "1p": 3575172,
+      "1s": 3584484,
+      "2m": 2467997,
+      "2p": 2486905,
+      "2s": 2498298,
+      "3m": 1767452,
+      "3p": 1778287,
+      "3s": 1791749,
+      "4m": 1520457,
+      "4p": 1528157,
+      "4s": 1539800,
+      "5m": 1170848,
+      "5mr": 201561,
+      "5p": 1169418,
+      "5pr": 202205,
+      "5s": 1181291,
+      "5sr": 204968,
+      "6m": 1512534,
+      "6p": 1525738,
+      "6s": 1541975,
+      "7m": 1761337,
+      "7p": 1773482,
+      "7s": 1788465,
+      "8m": 2452929,
+      "8p": 2475922,
+      "8s": 2486057,
+      "9m": 3551800,
+      "9p": 3571693,
+      "9s": 3582783,
+      "C": 3953885,
+      "E": 4110922,
+      "F": 3967523,
+      "N": 4330698,
+      "P": 3961625,
+      "S": 4148413,
+      "W": 4328252
+    },
+    "decisions": 89054877,
+    "matches": 173546,
+    "tsumogiri_decisions": 33867823
+  },
+  "shards": {
+    "count": 891,
+    "records_per_full_shard": 100000,
+    "final_shard_records": 54877,
+    "total_size_bytes": 3390173144
+  },
+  "dataset_sha256": "bb6ed4ae2f6d54eef5e38e146153d8944d67418ac9867149b44b978df41ab1f3",
+  "validation": {
+    "duplicate_match_ids": 0,
+    "hidden_or_future_fields_in_schema": 0,
+    "illegal_labels": 0,
+    "missing_labels": 0
+  },
+  "benchmark": {
+    "decisions_per_second": 20182.24,
+    "elapsed_seconds": 4412.538,
+    "matches_per_second": 39.33
+  }
+}
