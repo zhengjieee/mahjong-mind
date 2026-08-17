@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   tests:
+    name: test
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

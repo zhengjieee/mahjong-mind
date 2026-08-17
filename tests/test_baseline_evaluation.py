@@ -16,6 +16,11 @@ from mahjong_mind.modelling.metrics_evaluation import (
     PolicyPrediction,
     RankingMetricsAccumulator,
 )
+from mahjong_mind.modelling.model_input_encoding import (
+    FEATURE_NAMES,
+    MODEL_INPUT_VERSION,
+    encode_parquet_row,
+)
 from mahjong_mind.modelling.tile_efficiency import (
     calculate_shanten,
     rank_discards_by_tile_efficiency,
@@ -27,6 +32,71 @@ from mahjong_mind.modelling.tile_efficiency import (
 
 def legal_mask(*actions: int) -> tuple[bool, ...]:
     return tuple(action in actions for action in range(ACTION_COUNT))
+
+
+def test_model_input_encoding_separates_features_mask_and_label() -> None:
+    players = [
+        {
+            "concealed_tile_count": 13,
+            "discards": [],
+            "melds": [],
+            "riichi": "none",
+        }
+        for _ in range(4)
+    ]
+    players[2] = {
+        "concealed_tile_count": 14,
+        "discards": [
+            {
+                "tile": "5mr",
+                "tsumogiri": True,
+                "riichi": False,
+                "called": False,
+            }
+        ],
+        "melds": [],
+        "riichi": "pending",
+    }
+    row = {
+        "actor": 2,
+        "aka_flag": True,
+        "bakaze": "E",
+        "seat_wind": "S",
+        "kyoku": 1,
+        "honba": 0,
+        "kyotaku": 1,
+        "dealer": 1,
+        "scores": [10_000, 20_000, 30_000, 40_000],
+        "dora_markers": ["C"],
+        "draws_remaining": 50,
+        "actor_turn_index": 1,
+        "own_hand": ["1m", "5mr"],
+        "own_last_draw": "5mr",
+        "players": players,
+        "legal_discard_mask": legal_mask(0, 34),
+        "label_index": 34,
+        "actual_discard": "5mr",
+    }
+
+    encoded = encode_parquet_row(row)
+    other_label = encode_parquet_row({**row, "label_index": 0, "actual_discard": "1m"})
+
+    assert MODEL_INPUT_VERSION == "dense-observation-v1"
+    assert len(encoded.model_input.features) == len(FEATURE_NAMES)
+    assert encoded.model_input.features == other_label.model_input.features
+    assert encoded.model_input.legal_discard_mask == legal_mask(0, 34)
+    assert encoded.label_index == 34
+    assert other_label.label_index == 0
+    assert encoded.model_input.features[FEATURE_NAMES.index("own_hand_count.5mr")] == 1
+    assert (
+        encoded.model_input.features[FEATURE_NAMES.index("score_relative.0")] == 30_000
+    )
+    assert (
+        encoded.model_input.features[
+            FEATURE_NAMES.index("player_relative.0.riichi.pending")
+        ]
+        == 1
+    )
 
 
 def test_ranking_metrics_calculate_expected_values() -> None:
