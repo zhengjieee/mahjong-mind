@@ -2,7 +2,7 @@ import argparse
 import json
 import random
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
@@ -103,20 +103,66 @@ def _legal_actions(legal_mask: tuple[bool, ...]) -> tuple[int, ...]:
     return actions
 
 
-def iter_parquet_examples(
+def sample_shard_paths(
     dataset_directory: Path,
     *,
-    max_decisions: int | None = None,
-) -> Iterator[tuple[tuple[bool, ...], int]]:
-    """Stream legal masks and labels from sorted Parquet shards."""
-    if max_decisions is not None and max_decisions < 1:
-        raise BaselineError("max_decisions must be at least 1")
+    shard_count: int,
+    seed: int = 0,
+) -> tuple[Path, ...]:
+    """Randomly select a fixed number of whole shard files.
+
+    Sampling at shard granularity (rather than truncating to the first N rows)
+    avoids biasing an evaluation sample toward whichever matches happened to be
+    written into the earliest shards. Spreading the sample across many shards,
+    each contributing only a capped number of decisions (see
+    max_decisions_per_shard on the iteration functions below), keeps any single
+    contiguous block of matches from dominating the sample.
+    """
+    if shard_count < 1:
+        raise BaselineError("shard_count must be at least 1")
     shard_paths = sorted(dataset_directory.glob("source_year=*/part-*.parquet"))
     if not shard_paths:
         raise BaselineError(f"No Parquet shards found in {dataset_directory}")
+    if shard_count > len(shard_paths):
+        raise BaselineError(
+            f"Requested {shard_count} shards but only {len(shard_paths)} exist"
+        )
+
+    shuffled = list(shard_paths)
+    random.Random(seed).shuffle(shuffled)
+    return tuple(shuffled[:shard_count])
+
+
+def iter_parquet_examples(
+    dataset_directory: Path,
+    *,
+    shard_paths: Sequence[Path] | None = None,
+    max_decisions: int | None = None,
+    max_decisions_per_shard: int | None = None,
+) -> Iterator[tuple[tuple[bool, ...], int]]:
+    """Stream legal masks and labels from Parquet shards.
+
+    Reads every shard under dataset_directory in sorted order unless an
+    explicit shard_paths subset (e.g. from sample_shard_paths) is given.
+    max_decisions caps the overall stream; max_decisions_per_shard caps how
+    many rows are read from each individual shard file, so a random sample of
+    shards can be spread thin instead of read in full.
+    """
+    if max_decisions is not None and max_decisions < 1:
+        raise BaselineError("max_decisions must be at least 1")
+    if max_decisions_per_shard is not None and max_decisions_per_shard < 1:
+        raise BaselineError("max_decisions_per_shard must be at least 1")
+    resolved_shard_paths = (
+        tuple(shard_paths)
+        if shard_paths is not None
+        else tuple(sorted(dataset_directory.glob("source_year=*/part-*.parquet")))
+    )
+    if not resolved_shard_paths:
+        raise BaselineError(f"No Parquet shards found in {dataset_directory}")
 
     yielded = 0
-    for path in shard_paths:
+    for path in resolved_shard_paths:
+        yielded_in_shard = 0
         parquet = pq.ParquetFile(path)
         for batch in parquet.iter_batches(
             columns=["legal_discard_mask", "label_index"],
@@ -127,8 +173,19 @@ def iter_parquet_examples(
             for mask, label in zip(masks, labels, strict=True):
                 if max_decisions is not None and yielded >= max_decisions:
                     return
+                if (
+                    max_decisions_per_shard is not None
+                    and yielded_in_shard >= max_decisions_per_shard
+                ):
+                    break
                 yield tuple(mask), label
                 yielded += 1
+                yielded_in_shard += 1
+            if (
+                max_decisions_per_shard is not None
+                and yielded_in_shard >= max_decisions_per_shard
+            ):
+                break
 
 
 def fit_most_common_baseline(
@@ -171,7 +228,9 @@ def evaluate_baselines(
 def evaluate_tile_efficiency_baseline(
     dataset_directory: Path,
     *,
+    shard_paths: Sequence[Path] | None = None,
     max_decisions: int | None = None,
+    max_decisions_per_shard: int | None = None,
 ) -> RankingMetrics:
     """Evaluate tile efficiency from observable Parquet fields."""
     baseline = TileEfficiencyBaseline()
@@ -179,7 +238,9 @@ def evaluate_tile_efficiency_baseline(
     for hand, legal_mask, known_tiles, label_index in (
         _iter_tile_efficiency_examples(
             dataset_directory,
+            shard_paths=shard_paths,
             max_decisions=max_decisions,
+            max_decisions_per_shard=max_decisions_per_shard,
         )
     ):
         prediction = baseline.predict_tiles(hand, legal_mask, known_tiles)
@@ -190,12 +251,20 @@ def evaluate_tile_efficiency_baseline(
 def _iter_tile_efficiency_examples(
     dataset_directory: Path,
     *,
+    shard_paths: Sequence[Path] | None = None,
     max_decisions: int | None = None,
+    max_decisions_per_shard: int | None = None,
 ) -> Iterator[tuple[tuple[Tile, ...], tuple[bool, ...], tuple[Tile, ...], int]]:
     if max_decisions is not None and max_decisions < 1:
         raise BaselineError("max_decisions must be at least 1")
-    shard_paths = sorted(dataset_directory.glob("source_year=*/part-*.parquet"))
-    if not shard_paths:
+    if max_decisions_per_shard is not None and max_decisions_per_shard < 1:
+        raise BaselineError("max_decisions_per_shard must be at least 1")
+    resolved_shard_paths = (
+        tuple(shard_paths)
+        if shard_paths is not None
+        else tuple(sorted(dataset_directory.glob("source_year=*/part-*.parquet")))
+    )
+    if not resolved_shard_paths:
         raise BaselineError(f"No Parquet shards found in {dataset_directory}")
 
     yielded = 0
@@ -206,18 +275,30 @@ def _iter_tile_efficiency_examples(
         "legal_discard_mask",
         "label_index",
     ]
-    for path in shard_paths:
+    for path in resolved_shard_paths:
+        yielded_in_shard = 0
         parquet = pq.ParquetFile(path)
         for batch in parquet.iter_batches(columns=columns, batch_size=4_096):
             for row in batch.to_pylist():
                 if max_decisions is not None and yielded >= max_decisions:
                     return
+                if (
+                    max_decisions_per_shard is not None
+                    and yielded_in_shard >= max_decisions_per_shard
+                ):
+                    break
                 hand = tuple(row["own_hand"])
                 known_tiles = _known_tiles_from_parquet_row(row)
                 yield hand, tuple(row["legal_discard_mask"]), known_tiles, row[
                     "label_index"
                 ]
                 yielded += 1
+                yielded_in_shard += 1
+            if (
+                max_decisions_per_shard is not None
+                and yielded_in_shard >= max_decisions_per_shard
+            ):
+                break
 
 
 def _known_tiles_from_parquet_row(row: dict[str, Any]) -> tuple[Tile, ...]:
@@ -246,11 +327,37 @@ def main() -> None:
     parser.add_argument("--limit", type=int, dest="max_decisions")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--sample-shard-count",
+        type=int,
+        help=(
+            "Randomly select this many whole shard files, instead of reading "
+            "every shard in the dataset."
+        ),
+    )
+    parser.add_argument(
+        "--max-decisions-per-shard",
+        type=int,
+        help=(
+            "Cap how many decisions are read from each sampled shard, so the "
+            "sample is spread across many shards instead of a few full ones."
+        ),
+    )
+    parser.add_argument(
         "--tile-efficiency",
         action="store_true",
         help="Also evaluate the shanten-and-ukeire baseline.",
     )
     args = parser.parse_args()
+
+    shard_paths = (
+        sample_shard_paths(
+            args.dataset_directory,
+            shard_count=args.sample_shard_count,
+            seed=args.seed,
+        )
+        if args.sample_shard_count is not None
+        else None
+    )
 
     fit_directory = args.frequency_fit_dataset or args.dataset_directory
     frequency_baseline = fit_most_common_baseline(fit_directory)
@@ -261,18 +368,25 @@ def main() -> None:
         },
         iter_parquet_examples(
             args.dataset_directory,
+            shard_paths=shard_paths,
             max_decisions=args.max_decisions,
+            max_decisions_per_shard=args.max_decisions_per_shard,
         ),
     )
     if args.tile_efficiency:
         metrics["tile_efficiency"] = evaluate_tile_efficiency_baseline(
             args.dataset_directory,
+            shard_paths=shard_paths,
             max_decisions=args.max_decisions,
+            max_decisions_per_shard=args.max_decisions_per_shard,
         )
     same_dataset = fit_directory.resolve() == args.dataset_directory.resolve()
     report = {
         "evaluation_dataset": str(args.dataset_directory),
         "frequency_fit_dataset": str(fit_directory),
+        "sample_shard_count": args.sample_shard_count,
+        "max_decisions_per_shard": args.max_decisions_per_shard,
+        "sampled_shard_count": len(shard_paths) if shard_paths is not None else None,
         "decision_limit": args.max_decisions,
         "development_only": same_dataset,
         "note": (

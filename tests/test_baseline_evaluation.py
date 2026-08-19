@@ -2,6 +2,8 @@ import json
 import math
 from pathlib import Path
 
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
@@ -10,6 +12,8 @@ from mahjong_mind.modelling.baseline_predictions import (
     MostCommonLegalBaseline,
     RandomLegalBaseline,
     fit_most_common_baseline,
+    iter_parquet_examples,
+    sample_shard_paths,
 )
 from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
@@ -166,6 +170,45 @@ def test_frequency_baseline_uses_manifest_counts(tmp_path: Path) -> None:
 
     assert baseline.action_counts[0] == 3
     assert baseline.action_counts[1] == 1
+
+
+def test_sample_shard_paths_selects_fixed_count_deterministically(
+    tmp_path: Path,
+) -> None:
+    shard_dir = tmp_path / "source_year=2018"
+    shard_dir.mkdir()
+    for index in range(5):
+        pq.write_table(
+            pa.table({"x": list(range(100))}),
+            shard_dir / f"part-{index:05d}.parquet",
+        )
+
+    selected = sample_shard_paths(tmp_path, shard_count=3, seed=0)
+    repeated = sample_shard_paths(tmp_path, shard_count=3, seed=0)
+
+    assert selected == repeated
+    assert len(selected) == 3
+    assert len(set(selected)) == 3
+
+
+def test_iter_parquet_examples_caps_decisions_per_shard(tmp_path: Path) -> None:
+    shard_dir = tmp_path / "source_year=2018"
+    shard_dir.mkdir()
+    mask = legal_mask(0)
+    for index in range(2):
+        pq.write_table(
+            pa.table(
+                {
+                    "legal_discard_mask": [list(mask)] * 10,
+                    "label_index": [0] * 10,
+                }
+            ),
+            shard_dir / f"part-{index:05d}.parquet",
+        )
+
+    examples = list(iter_parquet_examples(tmp_path, max_decisions_per_shard=3))
+
+    assert len(examples) == 6
 
 
 def test_shanten_adapter_normalizes_red_fives() -> None:
