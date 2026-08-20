@@ -191,6 +191,24 @@ def test_sample_shard_paths_selects_fixed_count_deterministically(
     assert len(set(selected)) == 3
 
 
+def test_sample_shard_paths_never_returns_excluded_shards(tmp_path: Path) -> None:
+    shard_dir = tmp_path / "source_year=2018"
+    shard_dir.mkdir()
+    for index in range(5):
+        pq.write_table(
+            pa.table({"x": list(range(10))}),
+            shard_dir / f"part-{index:05d}.parquet",
+        )
+
+    already_used = sample_shard_paths(tmp_path, shard_count=3, seed=0)
+    remaining = sample_shard_paths(
+        tmp_path, shard_count=2, seed=1, exclude=already_used
+    )
+
+    assert set(remaining).isdisjoint(already_used)
+    assert len(remaining) == 2
+
+
 def test_iter_parquet_examples_caps_decisions_per_shard(tmp_path: Path) -> None:
     shard_dir = tmp_path / "source_year=2018"
     shard_dir.mkdir()

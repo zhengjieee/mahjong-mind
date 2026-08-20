@@ -108,6 +108,7 @@ def sample_shard_paths(
     *,
     shard_count: int,
     seed: int = 0,
+    exclude: Iterable[Path] = (),
 ) -> tuple[Path, ...]:
     """Randomly select a fixed number of whole shard files.
 
@@ -116,16 +117,24 @@ def sample_shard_paths(
     written into the earliest shards. Spreading the sample across many shards,
     each contributing only a capped number of decisions (see
     max_decisions_per_shard on the iteration functions below), keeps any single
-    contiguous block of matches from dominating the sample.
+    contiguous block of matches from dominating the sample. Pass exclude (e.g.
+    a set already used as a final comparison set) to guarantee this sample
+    never overlaps with it.
     """
     if shard_count < 1:
         raise BaselineError("shard_count must be at least 1")
-    shard_paths = sorted(dataset_directory.glob("source_year=*/part-*.parquet"))
+    excluded = {path.resolve() for path in exclude}
+    shard_paths = [
+        path
+        for path in sorted(dataset_directory.glob("source_year=*/part-*.parquet"))
+        if path.resolve() not in excluded
+    ]
     if not shard_paths:
         raise BaselineError(f"No Parquet shards found in {dataset_directory}")
     if shard_count > len(shard_paths):
         raise BaselineError(
-            f"Requested {shard_count} shards but only {len(shard_paths)} exist"
+            f"Requested {shard_count} shards but only {len(shard_paths)} remain "
+            "after exclusions"
         )
 
     shuffled = list(shard_paths)

@@ -222,3 +222,6 @@ data/raw/
 
 # Generated model datasets
 data/processed/
+
+# Trained model checkpoints
+data/checkpoints/
