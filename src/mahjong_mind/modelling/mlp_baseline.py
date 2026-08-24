@@ -10,9 +10,17 @@ from torch import nn
 from torch.utils.data import DataLoader, IterableDataset
 
 from mahjong_mind.modelling.baseline_predictions import sample_shard_paths
+from mahjong_mind.modelling.feature_normalisation import (
+    FeatureStatistics,
+    compute_vector_statistics,
+    normalisation_tensors,
+)
+from mahjong_mind.modelling.logits_decoding import (
+    logits_to_policy_prediction,
+    mask_illegal_logits,
+)
 from mahjong_mind.modelling.metrics_evaluation import (
     ACTION_COUNT,
-    PolicyPrediction,
     RankingMetrics,
     RankingMetricsAccumulator,
 )
@@ -68,27 +76,6 @@ class DiscardMLP(nn.Module):
         return self.network(features)
 
 
-def mask_illegal_logits(logits: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
-    """Replace illegal-action logits with a large negative value before softmax."""
-    return logits.masked_fill(~legal_mask, -1e9)
-
-
-_NORMALIZATION_EPSILON = 1e-6
-
-
-@dataclass(frozen=True, slots=True)
-class FeatureStatistics:
-    """Per-feature mean and standard deviation, used to standardize inputs.
-
-    Raw features mix wildly different scales (0/1 one-hots next to scores in
-    the tens of thousands), which destabilizes early training. Standardizing
-    to zero mean and unit variance keeps every feature on a comparable scale.
-    """
-
-    mean: tuple[float, ...]
-    std: tuple[float, ...]
-
-
 def compute_feature_statistics(
     dataset_directory: Path,
     *,
@@ -103,60 +90,8 @@ def compute_feature_statistics(
         max_decisions=max_decisions,
         max_decisions_per_shard=max_decisions_per_shard,
     )
-    total = torch.zeros(INPUT_DIM, dtype=torch.float64)
-    total_squared = torch.zeros(INPUT_DIM, dtype=torch.float64)
-    count = 0
-    for features, _legal_mask, _label_index in dataset:
-        values = features.to(torch.float64)
-        total += values
-        total_squared += values * values
-        count += 1
-    if count == 0:
-        raise MlpBaselineError("No examples were found to compute feature statistics")
-
-    mean = total / count
-    variance = torch.clamp((total_squared / count) - mean * mean, min=0.0)
-    std = torch.sqrt(variance)
-    return FeatureStatistics(mean=tuple(mean.tolist()), std=tuple(std.tolist()))
-
-
-def _normalization_tensors(
-    statistics: FeatureStatistics,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    mean = torch.tensor(statistics.mean, dtype=torch.float32)
-    std = torch.tensor(statistics.std, dtype=torch.float32) + _NORMALIZATION_EPSILON
-    return mean, std
-
-
-_PROBABILITY_FLOOR = 1e-12
-
-
-def _mlp_prediction(
-    logits: torch.Tensor, legal_mask: tuple[bool, ...]
-) -> PolicyPrediction:
-    """Convert one row of legal-masked logits into a PolicyPrediction.
-
-    Softmax is computed in float64 so the resulting probabilities sum to 1
-    within the tight tolerance RankingMetricsAccumulator requires; illegal
-    actions carry logit -1e9 and underflow to exactly 0.0 probability. An
-    undertrained model can still be confidently wrong enough that a *legal*
-    action's probability underflows to exactly 0.0 too, which would make its
-    cross-entropy undefined if that happens to be the historical label. Every
-    legal action is floored to a tiny positive probability and renormalized,
-    the same guarantee the smoothed non-learned baselines already provide.
-    """
-    probabilities = torch.softmax(logits.to(torch.float64), dim=-1)
-    legal_tensor = torch.tensor(legal_mask, dtype=torch.bool)
-    floored = torch.where(
-        legal_tensor,
-        torch.clamp(probabilities, min=_PROBABILITY_FLOOR),
-        probabilities,
-    )
-    normalized = (floored / floored.sum()).tolist()
-    legal_actions = [action for action, is_legal in enumerate(legal_mask) if is_legal]
-    ranked_actions = tuple(sorted(legal_actions, key=lambda action: -normalized[action]))
-    return PolicyPrediction(
-        ranked_actions=ranked_actions, probabilities=tuple(normalized)
+    return compute_vector_statistics(
+        (features for features, _legal_mask, _label_index in dataset), INPUT_DIM
     )
 
 
@@ -187,7 +122,7 @@ def _evaluate_model(
             logits = mask_illegal_logits(model(normalized_features), legal_mask)
             for row in range(logits.shape[0]):
                 row_legal_mask = tuple(legal_mask[row].tolist())
-                prediction = _mlp_prediction(logits[row], row_legal_mask)
+                prediction = logits_to_policy_prediction(logits[row], row_legal_mask)
                 accumulator.update(prediction, int(labels[row]), row_legal_mask)
     if was_training:
         model.train()
@@ -204,7 +139,7 @@ def load_checkpoint(checkpoint_path: Path) -> tuple[DiscardMLP, torch.Tensor, to
     statistics = FeatureStatistics(
         mean=tuple(checkpoint["feature_mean"]), std=tuple(checkpoint["feature_std"])
     )
-    mean, std = _normalization_tensors(statistics)
+    mean, std = normalisation_tensors(statistics)
     return model, mean, std
 
 
@@ -349,7 +284,7 @@ def train_mlp(
         max_decisions=max_decisions,
         max_decisions_per_shard=max_decisions_per_shard,
     )
-    mean, std = _normalization_tensors(statistics)
+    mean, std = normalisation_tensors(statistics)
 
     torch.manual_seed(seed)
     model = DiscardMLP(hidden_dim=hidden_dim, dropout=dropout)
