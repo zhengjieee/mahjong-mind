@@ -6,6 +6,7 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 import torch
 
+from mahjong_mind.modelling.metrics_evaluation import ACTION_COUNT
 from mahjong_mind.modelling.transformer_model import (
     CONTEXT_DIM,
     SEGMENT_DISCARD_SEAT0,
@@ -16,6 +17,7 @@ from mahjong_mind.modelling.transformer_model import (
     SEGMENT_MELD_SEAT1,
     SEGMENT_OWN_HAND,
     UNKNOWN_TILE_TOKEN,
+    DiscardTransformer,
     TransformerModelError,
     collate_transformer_batch,
     encode_transformer_row,
@@ -181,6 +183,39 @@ def test_collate_transformer_batch_pads_variable_length_sequences() -> None:
     assert padding_mask[0, -padding_length:].all()
     assert not padding_mask[0, : len(short_example.tile_tokens)].any()
     assert not padding_mask[1].any()
+
+
+def test_discard_transformer_forward_shape_and_eval_determinism() -> None:
+    torch.manual_seed(0)
+    model = DiscardTransformer(
+        d_model=8, num_layers=1, num_heads=2, dim_feedforward=16, dropout=0.5
+    )
+
+    batch_size, seq_len = 2, 3
+    tokens = torch.randint(2, 39, (batch_size, seq_len))
+    segments = torch.full((batch_size, seq_len), SEGMENT_OWN_HAND, dtype=torch.long)
+    flags = torch.zeros((batch_size, seq_len, 4), dtype=torch.float32)
+    context = torch.zeros((batch_size, CONTEXT_DIM), dtype=torch.float32)
+    padding_mask = torch.zeros((batch_size, seq_len), dtype=torch.bool)
+
+    # In train mode, dropout is active, so two forward passes on identical
+    # input are expected to differ.
+    model.train()
+    with torch.no_grad():
+        train_first = model(tokens, segments, flags, context, padding_mask)
+        train_second = model(tokens, segments, flags, context, padding_mask)
+    assert train_first.shape == (batch_size, ACTION_COUNT)
+    assert not torch.equal(train_first, train_second)
+
+    # In eval mode, dropout is disabled, so inference must be deterministic —
+    # this matters because early stopping compares checkpoints by re-running
+    # inference, which would be unreliable if eval mode weren't deterministic.
+    model.eval()
+    with torch.no_grad():
+        eval_first = model(tokens, segments, flags, context, padding_mask)
+        eval_second = model(tokens, segments, flags, context, padding_mask)
+    assert eval_first.shape == (batch_size, ACTION_COUNT)
+    assert torch.equal(eval_first, eval_second)
 
 
 def test_train_transformer_runs_end_to_end_on_synthetic_dataset(tmp_path: Path) -> None:
