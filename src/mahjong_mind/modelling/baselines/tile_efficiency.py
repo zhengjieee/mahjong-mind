@@ -8,7 +8,7 @@ from mahjong_mind.game_state.legal_actions import (
 )
 from mahjong_mind.game_state.player_observation import PlayerObservation
 from mahjong_mind.mjai.events import Tile
-from mahjong_mind.modelling.metrics_evaluation import PolicyPrediction
+from mahjong_mind.modelling.shared.metrics_evaluation import PolicyPrediction
 
 BASE_TILE_TYPES = DISCARD_TILE_TYPES[:34]
 _BASE_TILE_INDEX: dict[str, int] = {

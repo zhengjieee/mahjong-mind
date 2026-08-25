@@ -11,13 +11,13 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
 from mahjong_mind.mjai.events import Tile
-from mahjong_mind.modelling.metrics_evaluation import (
+from mahjong_mind.modelling.baselines.tile_efficiency import TileEfficiencyBaseline
+from mahjong_mind.modelling.shared.metrics_evaluation import (
     ACTION_COUNT,
     PolicyPrediction,
     RankingMetrics,
     RankingMetricsAccumulator,
 )
-from mahjong_mind.modelling.tile_efficiency import TileEfficiencyBaseline
 
 
 class BaselineError(ValueError):

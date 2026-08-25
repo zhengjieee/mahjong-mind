@@ -4,7 +4,7 @@
 
 This is the one and only evaluation the final selected model will ever receive against 2019, the project's frozen final test set. 2019 was reserved from the start and never touched during model development, training, hyperparameter decisions, or checkpoint selection for any model — the baselines, the MLP, or the Transformer.
 
-The final model is the Transformer, epoch 10 (`docs/transformer-model-results.md`), which had already beaten every non-learned baseline and the MLP on set A (2018).
+The final model is the Transformer, epoch 10 (`docs/results/transformer-model-results.md`), which had already beaten every non-learned baseline and the MLP on set A (2018).
 
 ### Evaluation configuration
 
@@ -20,7 +20,7 @@ evaluate_transformer_checkpoint(
 ```
 
 - Sample: 300,000 decisions from 2019 (60 shards, seed 0, capped at 5,000/shard) — the same shard-level random sampling design used for set A on 2018, applied here to 2019 for the same reason: avoiding the cluster-sampling bias a handful of full shards would introduce.
-- Model: `data/checkpoints/transformer_model/epoch-10.pt`, unchanged from the checkpoint evaluated in `docs/transformer-model-results.md`.
+- Model: `data/checkpoints/transformer_model/epoch-10.pt`, unchanged from the checkpoint evaluated in `docs/results/transformer-model-results.md`.
 - Legal-action rate: 100% by construction. Illegal actions are masked to near-zero probability before ranking (`mask_illegal_logits`), so the model cannot output an illegal action regardless of training quality — this isn't something that needed separate measurement.
 
 ## Results
@@ -35,5 +35,5 @@ The frozen test-set result is close to the set-A result: 0.26 percentage points 
 ## Limitations
 
 - Raw per-decision predictions were not preserved during this evaluation, so segmented analyses or reliability plots cannot be reproduced from this run without a second pass over 2019. Adding that capability now and rerunning would mean evaluating the frozen test set more than once, defeating its purpose — this is accepted as a deliberate scope tradeoff rather than retroactively fixed.
-- As with set A, this is a 300,000-decision random-shard sample (60 of 2019's 880 shards), not the full ~88M-decision corpus, for the same statistical and practicality reasons documented in `docs/baseline-validation-results.md`.
+- As with set A, this is a 300,000-decision random-shard sample (60 of 2019's 880 shards), not the full ~88M-decision corpus, for the same statistical and practicality reasons documented in `docs/results/baseline-validation-results.md`.
 - This evaluation used the exact same sampling seed (0) and shard count (60) as set A, but applied to a different dataset (2019 instead of 2018), so the specific shards selected are not the same files — only the sampling *method* is identical.

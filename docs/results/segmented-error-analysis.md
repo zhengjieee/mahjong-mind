@@ -2,7 +2,7 @@
 
 ## Run summary
 
-The final model (Transformer, epoch 10) was evaluated on set A (the same 300,000-decision sample of 2018 used for every other final comparison) with metrics broken down by five segment dimensions, in addition to the aggregate numbers already reported in `docs/transformer-model-results.md`. This reuses set A rather than the frozen 2019 test set, since only the one-time headline evaluation on 2019 is off-limits for repeated use — further analysis on set A carries no such restriction.
+The final model (Transformer, epoch 10) was evaluated on set A (the same 300,000-decision sample of 2018 used for every other final comparison) with metrics broken down by five segment dimensions, in addition to the aggregate numbers already reported in `docs/results/transformer-model-results.md`. This reuses set A rather than the frozen 2019 test set, since only the one-time headline evaluation on 2019 is off-limits for repeated use — further analysis on set A carries no such restriction.
 
 Every field used to build the segments (turn/draws-remaining, melds, dealer, riichi state, legal-action count) already exists in the Parquet decision schema, so this required no new data collection — only grouping decisions that were already being scored.
 
@@ -60,4 +60,4 @@ Reading across these: three of the five (2, 3, 4) are plausibly explained by the
 
 - Segment thresholds: game phase splits on `draws_remaining` (early ≥ 47, mid 24–46, late ≤ 23 — roughly thirds of a hand's live wall); candidate-set size buckets the legal-action count (1–3, 4–6, 7–9, 10+). Both are simple, documented choices, not tuned or validated against any ground truth — reasonable starting buckets for exploratory analysis, adjustable later if needed.
 - This analysis required a new module, `segmented_evaluation.py`, since the existing training/evaluation dataset (`TransformerDiscardDataset`) discards the raw row after tokenizing and never carried segment-relevant fields forward. The new module reuses the existing tokenizer, collate function, masking, and prediction logic unchanged — the only new code is deriving segment labels from fields already in the schema and tracking one accumulator per (dimension, bucket).
-- This is exploratory analysis, not a model change. No decision was made based on these results that affects the already-frozen 2019 test result in `docs/frozen-test-results.md`.
+- This is exploratory analysis, not a model change. No decision was made based on these results that affects the already-frozen 2019 test result in `docs/results/frozen-test-results.md`.

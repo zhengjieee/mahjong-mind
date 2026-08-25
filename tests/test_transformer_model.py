@@ -6,8 +6,7 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 import torch
 
-from mahjong_mind.modelling.metrics_evaluation import ACTION_COUNT
-from mahjong_mind.modelling.transformer_model import (
+from mahjong_mind.modelling.models.transformer_model import (
     CONTEXT_DIM,
     SEGMENT_DISCARD_SEAT0,
     SEGMENT_DISCARD_SEAT2,
@@ -23,6 +22,7 @@ from mahjong_mind.modelling.transformer_model import (
     encode_transformer_row,
     train_transformer,
 )
+from mahjong_mind.modelling.shared.metrics_evaluation import ACTION_COUNT
 
 
 def _row() -> dict:

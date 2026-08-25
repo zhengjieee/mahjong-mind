@@ -8,19 +8,19 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import torch
 from torch import nn
 
-from mahjong_mind.modelling.logits_decoding import (
-    logits_to_policy_prediction,
-    mask_illegal_logits,
-)
-from mahjong_mind.modelling.metrics_evaluation import (
-    RankingMetrics,
-    RankingMetricsAccumulator,
-)
-from mahjong_mind.modelling.transformer_model import (
+from mahjong_mind.modelling.models.transformer_model import (
     _PARQUET_COLUMNS,
     collate_transformer_batch,
     encode_transformer_row,
     load_checkpoint,
+)
+from mahjong_mind.modelling.shared.logits_decoding import (
+    logits_to_policy_prediction,
+    mask_illegal_logits,
+)
+from mahjong_mind.modelling.shared.metrics_evaluation import (
+    RankingMetrics,
+    RankingMetricsAccumulator,
 )
 
 SEGMENT_DIMENSIONS: tuple[str, ...] = (

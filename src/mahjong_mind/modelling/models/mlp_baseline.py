@@ -9,25 +9,25 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, IterableDataset
 
-from mahjong_mind.modelling.baseline_predictions import sample_shard_paths
-from mahjong_mind.modelling.feature_normalisation import (
+from mahjong_mind.modelling.baselines.baseline_predictions import sample_shard_paths
+from mahjong_mind.modelling.models.model_input_encoding import (
+    FEATURE_NAMES,
+    MODEL_INPUT_VERSION,
+    encode_parquet_row,
+)
+from mahjong_mind.modelling.shared.feature_normalisation import (
     FeatureStatistics,
     compute_vector_statistics,
     normalisation_tensors,
 )
-from mahjong_mind.modelling.logits_decoding import (
+from mahjong_mind.modelling.shared.logits_decoding import (
     logits_to_policy_prediction,
     mask_illegal_logits,
 )
-from mahjong_mind.modelling.metrics_evaluation import (
+from mahjong_mind.modelling.shared.metrics_evaluation import (
     ACTION_COUNT,
     RankingMetrics,
     RankingMetricsAccumulator,
-)
-from mahjong_mind.modelling.model_input_encoding import (
-    FEATURE_NAMES,
-    MODEL_INPUT_VERSION,
-    encode_parquet_row,
 )
 
 INPUT_DIM = len(FEATURE_NAMES)

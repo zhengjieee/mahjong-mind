@@ -1,6 +1,6 @@
 import torch
 
-from mahjong_mind.modelling.metrics_evaluation import PolicyPrediction
+from mahjong_mind.modelling.shared.metrics_evaluation import PolicyPrediction
 
 _PROBABILITY_FLOOR = 1e-12
 

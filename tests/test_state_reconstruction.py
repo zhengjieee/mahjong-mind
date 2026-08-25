@@ -20,7 +20,7 @@ from mahjong_mind.mjai.events import (
     TsumoEvent,
 )
 from mahjong_mind.mjai.parser import ParsedEvent
-from mahjong_mind.modelling.tile_efficiency import (
+from mahjong_mind.modelling.baselines.tile_efficiency import (
     TileEfficiencyBaseline,
     known_tiles_from_observation,
     tiles_to_34_counts,

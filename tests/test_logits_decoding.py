@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from mahjong_mind.modelling.logits_decoding import (
+from mahjong_mind.modelling.shared.logits_decoding import (
     logits_to_policy_prediction,
     mask_illegal_logits,
 )

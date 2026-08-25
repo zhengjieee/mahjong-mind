@@ -6,13 +6,13 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 import torch
 
-from mahjong_mind.modelling.mlp_baseline import (
+from mahjong_mind.modelling.models.mlp_baseline import (
     INPUT_DIM,
     MlpBaselineError,
     compute_feature_statistics,
     train_mlp,
 )
-from mahjong_mind.modelling.model_input_encoding import FEATURE_NAMES
+from mahjong_mind.modelling.models.model_input_encoding import FEATURE_NAMES
 
 
 def _players() -> list[dict]:

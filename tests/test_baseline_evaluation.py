@@ -8,29 +8,29 @@ import pytest
 
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
 from mahjong_mind.mjai.events import Tile
-from mahjong_mind.modelling.baseline_predictions import (
+from mahjong_mind.modelling.baselines.baseline_predictions import (
     MostCommonLegalBaseline,
     RandomLegalBaseline,
     fit_most_common_baseline,
     iter_parquet_examples,
     sample_shard_paths,
 )
-from mahjong_mind.modelling.metrics_evaluation import (
-    ACTION_COUNT,
-    PolicyPrediction,
-    RankingMetricsAccumulator,
-)
-from mahjong_mind.modelling.model_input_encoding import (
-    FEATURE_NAMES,
-    MODEL_INPUT_VERSION,
-    encode_parquet_row,
-)
-from mahjong_mind.modelling.tile_efficiency import (
+from mahjong_mind.modelling.baselines.tile_efficiency import (
     calculate_shanten,
     rank_discards_by_tile_efficiency,
     shanten_after_legal_discards,
     tiles_to_34_counts,
     ukeire_after_legal_discards,
+)
+from mahjong_mind.modelling.models.model_input_encoding import (
+    FEATURE_NAMES,
+    MODEL_INPUT_VERSION,
+    encode_parquet_row,
+)
+from mahjong_mind.modelling.shared.metrics_evaluation import (
+    ACTION_COUNT,
+    PolicyPrediction,
+    RankingMetricsAccumulator,
 )
 
 

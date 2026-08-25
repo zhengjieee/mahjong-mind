@@ -2,7 +2,7 @@
 
 ## Run summary
 
-The Transformer discard policy was trained on 2017 and evaluated on set A, the same 300,000-decision random-shard sample of 2018 used for the non-learned baselines (`docs/baseline-validation-results.md`) and the MLP (`docs/mlp-baseline-results.md`). The checkpoint evaluated here was never scored against set A during training or checkpoint selection; this is the first time it was measured on that data.
+The Transformer discard policy was trained on 2017 and evaluated on set A, the same 300,000-decision random-shard sample of 2018 used for the non-learned baselines (`docs/results/baseline-validation-results.md`) and the MLP (`docs/results/mlp-baseline-results.md`). The checkpoint evaluated here was never scored against set A during training or checkpoint selection; this is the first time it was measured on that data.
 
 ### Training configuration
 
@@ -10,7 +10,7 @@ Training ran in two stages: 5 epochs first, then 5 more resumed from the `epoch-
 
 ```bash
 # Stage 1: epochs 1-5
-PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.transformer_model \
+PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.models.transformer_model \
   data/processed/2017 --sample-shard-count 100 --max-decisions-per-shard 5000 \
   --epochs 5 --batch-size 256 --seed 0 \
   --checkpoint-dir data/checkpoints/transformer_model \
@@ -19,7 +19,7 @@ PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.transformer_model \
   --validation-seed 1 --exclude-sample-shard-count 60 --exclude-sample-seed 0
 
 # Stage 2: epochs 6-10, resumed from epoch-5
-PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.transformer_model \
+PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.models.transformer_model \
   data/processed/2017 --sample-shard-count 100 --max-decisions-per-shard 5000 \
   --epochs 5 --batch-size 256 --seed 0 \
   --checkpoint-dir data/checkpoints/transformer_model \

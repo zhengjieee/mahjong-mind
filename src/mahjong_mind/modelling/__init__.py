@@ -1,1 +1,1 @@
-"""Baseline policies, evaluation, and future learned models."""
+"""Discard policies: baselines/, shared/ utilities, models/, and analysis."""

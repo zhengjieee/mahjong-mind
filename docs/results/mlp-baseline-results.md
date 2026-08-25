@@ -2,12 +2,12 @@
 
 ## Run summary
 
-The dense MLP discard baseline was trained on 2017 and evaluated on set A, the same 300,000-decision random-shard sample of 2018 used for the non-learned baselines in `docs/baseline-validation-results.md`. The checkpoint evaluated here was never scored against set A during training or checkpoint selection; this is the first time it was measured on that data.
+The dense MLP discard baseline was trained on 2017 and evaluated on set A, the same 300,000-decision random-shard sample of 2018 used for the non-learned baselines in `docs/results/baseline-validation-results.md`. The checkpoint evaluated here was never scored against set A during training or checkpoint selection; this is the first time it was measured on that data.
 
 ### Training configuration
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.mlp_baseline \
+PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.models.mlp_baseline \
   data/processed/2017 --sample-shard-count 100 --max-decisions-per-shard 5000 \
   --epochs 5 --batch-size 256 --seed 0 \
   --checkpoint-dir data/checkpoints/mlp_baseline \

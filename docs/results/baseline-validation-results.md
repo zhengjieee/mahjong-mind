@@ -5,7 +5,7 @@
 The random-legal, most-common-legal, and tile-efficiency baselines were evaluated on a random-shard sample of the processed 2018 dataset. The most-common-legal baseline was fitted on the full 2017 dataset (training corpus), not on 2018, so there is no fit/eval leakage in this run.
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.baseline_predictions \
+PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.baselines.baseline_predictions \
   data/processed/2018 --frequency-fit-dataset data/processed/2017 \
   --sample-shard-count 60 --max-decisions-per-shard 5000 --seed 0 --tile-efficiency
 ```

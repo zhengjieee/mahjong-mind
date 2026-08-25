@@ -3,12 +3,12 @@ from pathlib import Path
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
+from mahjong_mind.modelling.models.transformer_model import train_transformer
 from mahjong_mind.modelling.segmented_evaluation import (
     SEGMENT_DIMENSIONS,
     compute_segment_labels,
     evaluate_transformer_checkpoint_segmented,
 )
-from mahjong_mind.modelling.transformer_model import train_transformer
 
 
 def _players(*, actor_melds: list | None = None, riichi_states: tuple[str, str, str, str] = ("none",) * 4) -> list[dict]:

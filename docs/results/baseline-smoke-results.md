@@ -5,7 +5,7 @@
 The random-legal, most-common-legal, and tile-efficiency baselines were evaluated on the first 1,000 decisions in the processed 2009 development dataset. The run completed successfully in 8.01 seconds.
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.baseline_predictions \
+PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.baselines.baseline_predictions \
   data/processed/2009 --limit 1000 --seed 0 --tile-efficiency
 ```
 
