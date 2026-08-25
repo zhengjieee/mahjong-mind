@@ -34,8 +34,27 @@ PYTHONPATH=src .venv/bin/python -m mahjong_mind.modelling.transformer_model \
 - Context features were standardized (zero mean, unit variance) the same way the MLP's dense features were, using statistics computed once from the training sample and reused across both training stages.
 - Training data: the exact same 500,000 decisions from 2017 used for the MLP (100 shards, seed 0, capped at 5,000/shard), read once per epoch across all 10 epochs, so any difference in results reflects architecture and training length, not data budget.
 - Optimizer: AdamW, learning rate 1e-3, batch size 256. Stage 1 (5 epochs) took 1 hour 25 minutes; stage 2 (5 more epochs, resumed) took 1 hour 39 minutes — training is substantially slower than the MLP's ~10 minutes for the same data budget, since self-attention costs more per decision than the MLP's plain matrix multiplies, and padding variable-length sequences to a batch's longest sequence adds further overhead.
-- Early stopping: each epoch's checkpoint was scored against the exact same set B used for the MLP (20,000 decisions, 20 shards, seed 1, excluding set A's 60 shards). Validation Top-1 accuracy across all 10 epochs: 52.0%, 55.3%, 58.3%, 59.5%, 60.4%, 60.8%, 61.2%, 61.8%, 61.9%, 62.5%. Gains were large early (epochs 1-5: +8.4 points) and clearly diminishing later (epochs 6-10: +2.1 points), though still positive every single epoch — epoch 10 was selected as best.
+- Early stopping: each epoch's checkpoint was scored against the exact same set B used for the MLP (20,000 decisions, 20 shards, seed 1, excluding set A's 60 shards). Epoch 10 was selected as best.
 - Checkpoints are saved locally under `data/checkpoints/transformer_model/` (gitignored, not committed).
+
+### Training trajectory: why stop at epoch 10
+
+All numbers below are on set B (validation), the only sample scored at every epoch. Only epoch 10 — the epoch early stopping actually selected — was evaluated on set A; epoch 5 was not evaluated on set A separately, since it was superseded before that comparison was made.
+
+| Epoch | Top-1 | Top-3 | MRR | Cross-entropy | Δ Top-1 vs. previous epoch |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 51.96% | 76.92% | 0.6700 | 1.4594 | — |
+| 2 | 55.30% | 80.20% | 0.6984 | 1.3528 | +3.34 |
+| 3 | 58.33% | 82.66% | 0.7221 | 1.2687 | +3.03 |
+| 4 | 59.53% | 83.71% | 0.7326 | 1.2288 | +1.21 |
+| 5 | 60.36% | 84.60% | 0.7397 | 1.1900 | +0.83 |
+| 6 | 60.79% | 85.41% | 0.7442 | 1.1713 | +0.44 |
+| 7 | 61.24% | 85.70% | 0.7483 | 1.1480 | +0.45 |
+| 8 | 61.84% | 86.46% | 0.7533 | 1.1305 | +0.60 |
+| 9 | 61.88% | 86.59% | 0.7542 | 1.1243 | +0.05 |
+| 10 | 62.52% | 86.96% | 0.7591 | 1.1045 | +0.64 |
+
+The per-epoch gain shrank from over +3 points in epochs 1-2 to well under +1 point from epoch 4 onward. Averaged over each stage, epochs 1-5 gained +8.4 points total (+1.68/epoch); epochs 6-10 gained +2.16 points total (+0.43/epoch) — roughly a 4x drop in the rate of improvement. Every epoch was still net positive, so there was no overfitting signal telling the model to stop. Stopping at epoch 10 reflects that flattening rather than an arbitrary time or epoch-count budget — continuing further would cost roughly another 1.5-2 hours per 5 epochs for a return on the order of what epochs 6-10 delivered combined, which is a reasonable point to stop without a specific reason (more training data, a different architecture, or a concrete accuracy target) to justify pushing further.
 
 ## Results on set A (300,000 decisions, 60 shards, seed 0)
 
@@ -51,7 +70,7 @@ The Transformer beats every model on every metric. It improves Top-1 accuracy by
 
 ## Consistency check against the validation slice
 
-Epoch 10's score on set B during training (Top-1 62.52%, Top-3 86.96%, MRR 0.7591, cross-entropy 1.1045) is close to its score on set A above (Top-1 62.84%, Top-3 87.40%, MRR 0.7623, cross-entropy 1.0973). As with the MLP and the earlier 5-epoch checkpoint, this closeness is a reasonable sanity check that checkpoint selection was not overfit to a lucky validation sample.
+Epoch 10's score on set B during training (Top-1 62.52%, Top-3 86.96%, MRR 0.7591, cross-entropy 1.1045) is close to its score on set A above (Top-1 62.84%, Top-3 87.40%, MRR 0.7623, cross-entropy 1.0973). As with the MLP, this closeness is a reasonable sanity check that checkpoint selection was not overfit to a lucky validation sample.
 
 ## Methodology notes
 
