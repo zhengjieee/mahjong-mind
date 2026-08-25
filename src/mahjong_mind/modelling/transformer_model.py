@@ -536,6 +536,8 @@ def train_transformer(
     validation_shard_paths: Sequence[Path] | None = None,
     validation_max_decisions: int | None = None,
     validation_max_decisions_per_shard: int | None = None,
+    initial_checkpoint: Path | None = None,
+    starting_epoch: int = 1,
 ) -> TrainingResult:
     """Fit the Transformer discard policy on a Parquet decision dataset.
 
@@ -546,6 +548,18 @@ def train_transformer(
     reported as best. checkpoint_dir is required whenever validation is
     requested, since selecting a best epoch is only meaningful if each
     epoch's weights were actually saved.
+
+    initial_checkpoint continues training from a previously saved checkpoint
+    instead of starting fresh, reusing its weights and normalization
+    statistics (skipping the statistics pass) rather than redoing already-
+    completed epochs. The architecture is read from that checkpoint, so
+    d_model/num_layers/num_heads/dim_feedforward/dropout are ignored in that
+    case. The optimizer itself always starts fresh (its momentum/variance
+    state isn't saved), a deliberate simplification. starting_epoch controls
+    the epoch numbers used for this call's new checkpoint filenames and the
+    returned best_epoch, so they continue rather than overwrite the earlier
+    run's files; best_epoch/best_checkpoint_path only reflect this call's
+    epochs, not any prior run's.
     """
     if epochs < 1:
         raise TransformerModelError("epochs must be at least 1")
@@ -554,25 +568,46 @@ def train_transformer(
             "checkpoint_dir is required when validation_dataset_directory is given"
         )
 
-    stats_dataset = TransformerDiscardDataset(
-        dataset_directory,
-        shard_paths=shard_paths,
-        max_decisions=max_decisions,
-        max_decisions_per_shard=max_decisions_per_shard,
-    )
-    statistics = compute_vector_statistics(
-        (context for _t, _s, _f, context, _l, _lbl in stats_dataset), CONTEXT_DIM
-    )
-    mean, std = normalisation_tensors(statistics)
+    if initial_checkpoint is not None:
+        previous = torch.load(initial_checkpoint, weights_only=False)
+        d_model = previous["d_model"]
+        num_layers = previous["num_layers"]
+        num_heads = previous["num_heads"]
+        dim_feedforward = previous["dim_feedforward"]
+        dropout = previous["dropout"]
+        statistics = FeatureStatistics(
+            mean=tuple(previous["context_mean"]), std=tuple(previous["context_std"])
+        )
+        mean, std = normalisation_tensors(statistics)
+        torch.manual_seed(seed)
+        model = DiscardTransformer(
+            d_model=d_model,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+        )
+        model.load_state_dict(previous["model_state_dict"])
+    else:
+        stats_dataset = TransformerDiscardDataset(
+            dataset_directory,
+            shard_paths=shard_paths,
+            max_decisions=max_decisions,
+            max_decisions_per_shard=max_decisions_per_shard,
+        )
+        statistics = compute_vector_statistics(
+            (context for _t, _s, _f, context, _l, _lbl in stats_dataset), CONTEXT_DIM
+        )
+        mean, std = normalisation_tensors(statistics)
 
-    torch.manual_seed(seed)
-    model = DiscardTransformer(
-        d_model=d_model,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        dim_feedforward=dim_feedforward,
-        dropout=dropout,
-    )
+        torch.manual_seed(seed)
+        model = DiscardTransformer(
+            d_model=d_model,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+        )
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     loss_fn = nn.CrossEntropyLoss()
 
@@ -580,7 +615,7 @@ def train_transformer(
     checkpoint_paths: list[Path] = []
     validation_metrics: list[RankingMetrics] = []
     examples_seen = 0
-    for epoch in range(1, epochs + 1):
+    for epoch in range(starting_epoch, starting_epoch + epochs):
         dataset = TransformerDiscardDataset(
             dataset_directory,
             shard_paths=shard_paths,
@@ -645,11 +680,12 @@ def train_transformer(
     best_epoch: int | None = None
     best_checkpoint_path: Path | None = None
     if validation_metrics:
-        best_epoch = 1 + max(
+        best_index = max(
             range(len(validation_metrics)),
             key=lambda index: validation_metrics[index].top_1_accuracy,
         )
-        best_checkpoint_path = checkpoint_paths[best_epoch - 1]
+        best_epoch = starting_epoch + best_index
+        best_checkpoint_path = checkpoint_paths[best_index]
 
     return TrainingResult(
         epochs=epochs,
@@ -712,6 +748,17 @@ def main() -> None:
         default=0,
         help="Seed used to regenerate the final comparison sample (set A).",
     )
+    parser.add_argument(
+        "--initial-checkpoint",
+        type=Path,
+        help="Continue training from this checkpoint instead of starting fresh.",
+    )
+    parser.add_argument(
+        "--starting-epoch",
+        type=int,
+        default=1,
+        help="Epoch number new checkpoints/best_epoch start counting from.",
+    )
     args = parser.parse_args()
 
     shard_paths = (
@@ -759,6 +806,8 @@ def main() -> None:
         validation_dataset_directory=args.validation_dataset_directory,
         validation_shard_paths=validation_shard_paths,
         validation_max_decisions_per_shard=args.validation_max_decisions_per_shard,
+        initial_checkpoint=args.initial_checkpoint,
+        starting_epoch=args.starting_epoch,
     )
     print(
         json.dumps(

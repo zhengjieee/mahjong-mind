@@ -252,6 +252,49 @@ def test_train_transformer_runs_end_to_end_on_synthetic_dataset(tmp_path: Path) 
     assert len(checkpoint["context_std"]) == CONTEXT_DIM
 
 
+def test_train_transformer_resumes_from_a_checkpoint(tmp_path: Path) -> None:
+    dataset_directory = tmp_path / "2017"
+    _write_synthetic_shard(
+        dataset_directory / "source_year=2017" / "part-00000.parquet",
+        row_count=20,
+    )
+    checkpoint_dir = tmp_path / "checkpoints"
+
+    first = train_transformer(
+        dataset_directory,
+        epochs=2,
+        batch_size=4,
+        d_model=8,
+        num_layers=1,
+        num_heads=2,
+        dim_feedforward=16,
+        seed=0,
+        checkpoint_dir=checkpoint_dir,
+    )
+    assert [path.name for path in first.checkpoint_paths] == ["epoch-1.pt", "epoch-2.pt"]
+
+    second = train_transformer(
+        dataset_directory,
+        epochs=2,
+        batch_size=4,
+        seed=0,
+        checkpoint_dir=checkpoint_dir,
+        initial_checkpoint=first.checkpoint_paths[-1],
+        starting_epoch=3,
+    )
+
+    # New checkpoints continue the numbering rather than overwriting the
+    # earlier run's files.
+    assert [path.name for path in second.checkpoint_paths] == ["epoch-3.pt", "epoch-4.pt"]
+    for path in first.checkpoint_paths:
+        assert path.exists()
+
+    resumed_checkpoint = torch.load(second.checkpoint_paths[0], weights_only=False)
+    original_checkpoint = torch.load(first.checkpoint_paths[-1], weights_only=False)
+    assert resumed_checkpoint["d_model"] == original_checkpoint["d_model"]
+    assert resumed_checkpoint["context_mean"] == original_checkpoint["context_mean"]
+
+
 def test_train_transformer_with_validation_picks_a_best_epoch(tmp_path: Path) -> None:
     train_directory = tmp_path / "2017"
     _write_synthetic_shard(
