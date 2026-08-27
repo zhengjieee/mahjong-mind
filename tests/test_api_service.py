@@ -16,6 +16,8 @@ def client():
     checkpoint_path = (
         Path(__file__).parent.parent / "data" / "checkpoints" / "transformer_model" / "epoch-10.pt"
     )
+    if not checkpoint_path.exists():
+        pytest.skip("Checkpoint not available (expected in CI)")
     service_module._service = service_module.load_service(checkpoint_path, model_version="transformer-epoch-10")
 
     return TestClient(app)
