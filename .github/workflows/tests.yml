@@ -25,6 +25,8 @@ jobs:
       - name: Install dependencies
         run: >-
           python -m pip install
+          fastapi==0.115.6
+          httpx==0.29.0
           mahjong==2.0.0
           mypy==2.3.0
           pyarrow==25.0.1

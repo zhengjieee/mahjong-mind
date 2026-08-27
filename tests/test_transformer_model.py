@@ -350,3 +350,45 @@ def test_train_transformer_requires_checkpoint_dir_for_validation(tmp_path: Path
             dim_feedforward=16,
             validation_dataset_directory=validation_directory,
         )
+
+
+def test_batch_vs_single_inference_equivalence() -> None:
+    """Verify that padding does not corrupt logits: single example alone and in a batch produce identical outputs."""
+    model = DiscardTransformer(d_model=64, num_layers=2, num_heads=4, dim_feedforward=128, dropout=0.1)
+    model.eval()
+
+    # Encode one example.
+    example = encode_transformer_row(_row())
+
+    # Run inference on the example alone (no batch, no padding).
+    with torch.no_grad():
+        single_tokens = torch.tensor([example.tile_tokens], dtype=torch.long)
+        single_segments = torch.tensor([example.segment_ids], dtype=torch.long)
+        single_flags = torch.tensor([example.flags], dtype=torch.float32)
+        single_context = torch.tensor([example.context_features], dtype=torch.float32)
+        single_padding_mask = torch.zeros(1, len(example.tile_tokens), dtype=torch.bool)
+        single_logits = model(single_tokens, single_segments, single_flags, single_context, single_padding_mask)
+
+    # Run inference on the example in a batch of size 1 (with padding).
+    def _as_batch_item(ex):
+        return (
+            torch.tensor(ex.tile_tokens, dtype=torch.long),
+            torch.tensor(ex.segment_ids, dtype=torch.long),
+            torch.tensor(ex.flags, dtype=torch.float32),
+            torch.tensor(ex.context_features, dtype=torch.float32),
+            torch.tensor(ex.legal_discard_mask, dtype=torch.bool),
+            ex.label_index,
+        )
+
+    with torch.no_grad():
+        batch_tokens, batch_segments, batch_flags, batch_context, batch_padding_mask, _, _ = (
+            collate_transformer_batch([_as_batch_item(example)])
+        )
+        batch_logits = model(batch_tokens, batch_segments, batch_flags, batch_context, batch_padding_mask)
+
+    # Compare: logits should be identical (within floating-point tolerance).
+    assert single_logits.shape == batch_logits.shape
+    assert torch.allclose(single_logits, batch_logits, atol=1e-5), (
+        "Logits differ between single and batched inference; padding mask may be leaking into attention. "
+        "This would silently corrupt all batched metrics (test accuracy, frozen test score, etc.)."
+    )
