@@ -16,6 +16,9 @@ dependencies = [
     "mahjong>=0.1.0",
 ]
 
+[tool.ruff.lint]
+ignore = ["UP040"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
