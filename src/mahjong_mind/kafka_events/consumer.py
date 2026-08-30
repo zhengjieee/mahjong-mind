@@ -3,10 +3,11 @@
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
-from kafka import KafkaConsumer  # type: ignore[import-untyped]
+from kafka import KafkaConsumer, KafkaProducer  # type: ignore[import-untyped]
 
 from mahjong_mind.game_state.legal_actions import legal_discard_mask
 from mahjong_mind.game_state.player_observation import observation_for_player
@@ -32,12 +33,14 @@ class GameStateConsumer:
     """Consumes game events, reconstructs state, and calls inference API."""
 
     TOPIC_GAME_EVENTS = "riichi.game-events"
+    TOPIC_DLQ = "riichi.game-events-dlq"
 
     def __init__(
         self,
         api_base_url: str,
         kafka_brokers: list[str] | str = "localhost:9092",
         group_id: str = "mahjong-mind-consumer",
+        checkpoint_dir: Path | None = None,
     ):
         """Initialize consumer with API endpoint and Kafka connection."""
         if isinstance(kafka_brokers, str):
@@ -45,8 +48,10 @@ class GameStateConsumer:
         self.kafka_brokers = kafka_brokers
         self.api_base_url = api_base_url
         self.group_id = group_id
+        self.checkpoint_dir = checkpoint_dir or Path("/tmp/mahjong-mind-checkpoints")
 
         self.consumer: KafkaConsumer | None = None
+        self.dlq_producer: KafkaProducer | None = None
         self.http_client: httpx.Client | None = None
 
         # Per-game-id reconstructors to maintain state
@@ -54,6 +59,9 @@ class GameStateConsumer:
 
         # Cache predictions from TsumoEvent to DahaiEvent
         self.pending_predictions: dict[str, PredictionResult] = {}
+
+        # Track events processed per game for recovery
+        self.events_processed: dict[str, int] = {}
 
     def connect(self) -> None:
         """Connect to Kafka and initialize HTTP client."""
@@ -64,13 +72,23 @@ class GameStateConsumer:
             auto_offset_reset="earliest",
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         )
+        self.dlq_producer = KafkaProducer(
+            bootstrap_servers=self.kafka_brokers,
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        )
         self.http_client = httpx.Client(base_url=self.api_base_url)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def disconnect(self) -> None:
         """Disconnect from Kafka and close HTTP client."""
+        self._save_checkpoints()
         if self.consumer:
             self.consumer.close()
             self.consumer = None
+        if self.dlq_producer:
+            self.dlq_producer.flush()
+            self.dlq_producer.close()
+            self.dlq_producer = None
         if self.http_client:
             self.http_client.close()
             self.http_client = None
@@ -92,23 +110,39 @@ class GameStateConsumer:
         event_index = event_data["event_index"]
         event_dict = event_data["event"]
 
-        # Get or create state reconstructor for this game
-        if game_id not in self.reconstructors:
-            self.reconstructors[game_id] = StateReconstructor()
+        try:
+            # Get or create state reconstructor for this game
+            if game_id not in self.reconstructors:
+                self.reconstructors[game_id] = StateReconstructor()
+                checkpoint = self._load_checkpoint(game_id)
+                if checkpoint > 0:
+                    logger.info(f"Resuming {game_id} from event {checkpoint}")
 
-        reconstructor = self.reconstructors[game_id]
+            # Skip events before checkpoint
+            checkpoint = self._load_checkpoint(game_id)
+            if event_index < checkpoint:
+                return
 
-        # Reconstruct the event from dict
-        parsed_event = self._reconstruct_event(game_id, event_index, event_dict)
+            reconstructor = self.reconstructors[game_id]
 
-        # Apply to state
-        state = reconstructor.apply(parsed_event)
+            # Reconstruct the event from dict
+            parsed_event = self._reconstruct_event(game_id, event_index, event_dict)
 
-        # Detect decision points and call inference API
-        if isinstance(parsed_event.event, TsumoEvent):
-            self._handle_tsumo(game_id, event_index, parsed_event.event, state)
-        elif isinstance(parsed_event.event, DahaiEvent):
-            self._handle_dahai(game_id, event_index, parsed_event.event)
+            # Apply to state
+            state = reconstructor.apply(parsed_event)
+
+            # Detect decision points and call inference API
+            if isinstance(parsed_event.event, TsumoEvent):
+                self._handle_tsumo(game_id, event_index, parsed_event.event, state)
+            elif isinstance(parsed_event.event, DahaiEvent):
+                self._handle_dahai(game_id, event_index, parsed_event.event)
+
+            # Update checkpoint after successful processing
+            self._update_checkpoint(game_id, event_index)
+
+        except (ValueError, RuntimeError, httpx.HTTPError, KeyError) as e:
+            logger.error(f"Error processing {game_id} event {event_index}: {e}")
+            self._send_to_dlq(game_id, event_index, event_dict, str(e))
 
     def _reconstruct_event(
         self,
@@ -253,6 +287,7 @@ class GameStateConsumer:
 
         except (httpx.HTTPError, ValueError, RuntimeError) as e:
             logger.error(f"Failed to get prediction for {game_id} event {event_index}: {e}")
+            # Don't send to DLQ for API errors; they may be transient
 
     def _handle_dahai(
         self,
@@ -289,3 +324,57 @@ class GameStateConsumer:
         winds = ("E", "S", "W", "N")
         offset = (player_id - dealer) % 4
         return winds[offset]
+
+    def _send_to_dlq(
+        self,
+        game_id: str,
+        event_index: int,
+        event_data: dict[str, Any],
+        error: str,
+    ) -> None:
+        """Send failed event to dead-letter queue."""
+        if not self.dlq_producer:
+            return
+
+        dlq_message = {
+            "game_id": game_id,
+            "event_index": event_index,
+            "event": event_data,
+            "error": error,
+            "timestamp": __import__("time").time(),
+        }
+
+        try:
+            self.dlq_producer.send(
+                self.TOPIC_DLQ,
+                key=game_id.encode("utf-8"),
+                value=dlq_message,
+            )
+            logger.warning(
+                f"Sent event to DLQ: game {game_id} event {event_index}: {error}"
+            )
+        except (httpx.HTTPError, OSError) as e:
+            logger.error(f"Failed to send to DLQ for {game_id} event {event_index}: {e}")
+
+    def _save_checkpoints(self) -> None:
+        """Save checkpoint (last processed event index per game)."""
+        for game_id, event_index in self.events_processed.items():
+            checkpoint_file = self.checkpoint_dir / f"{game_id}.checkpoint"
+            try:
+                checkpoint_file.write_text(str(event_index))
+            except OSError as e:
+                logger.error(f"Failed to save checkpoint for {game_id}: {e}")
+
+    def _load_checkpoint(self, game_id: str) -> int:
+        """Load checkpoint (last processed event index) for a game."""
+        checkpoint_file = self.checkpoint_dir / f"{game_id}.checkpoint"
+        if checkpoint_file.exists():
+            try:
+                return int(checkpoint_file.read_text().strip())
+            except (OSError, ValueError) as e:
+                logger.warning(f"Failed to load checkpoint for {game_id}: {e}")
+        return 0
+
+    def _update_checkpoint(self, game_id: str, event_index: int) -> None:
+        """Update checkpoint after successful event processing."""
+        self.events_processed[game_id] = event_index

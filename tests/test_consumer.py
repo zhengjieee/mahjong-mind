@@ -154,3 +154,73 @@ def test_consumer_seat_wind_calculation() -> None:
     assert GameStateConsumer._seat_wind(2, 1) == "S"
     assert GameStateConsumer._seat_wind(3, 1) == "W"
     assert GameStateConsumer._seat_wind(0, 1) == "N"
+
+
+def test_consumer_checkpoint_save_and_load(tmp_path: str) -> None:
+    """Test checkpoint saving and loading."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        consumer = GameStateConsumer(
+            api_base_url="http://localhost:8000",
+            checkpoint_dir=Path(tmpdir),
+        )
+
+        game_id = "test-game-001"
+
+        # Save checkpoint
+        consumer._update_checkpoint(game_id, 42)
+        consumer._save_checkpoints()
+
+        # Load checkpoint
+        loaded = consumer._load_checkpoint(game_id)
+        assert loaded == 42
+
+
+def test_consumer_sends_to_dlq_on_error(tmp_path: str) -> None:
+    """Test that failed events are sent to DLQ."""
+    consumer = GameStateConsumer(api_base_url="http://localhost:8000")
+
+    # Mock DLQ producer
+    mock_dlq_producer = MagicMock()
+    consumer.dlq_producer = mock_dlq_producer
+
+    # Send to DLQ
+    game_id = "test-game-001"
+    consumer._send_to_dlq(game_id, 5, {"type": "invalid"}, "Test error")
+
+    # Verify DLQ producer was called
+    assert mock_dlq_producer.send.called
+    call_args = mock_dlq_producer.send.call_args
+    assert call_args[0][0] == consumer.TOPIC_DLQ
+    assert call_args[1]["key"] == game_id.encode("utf-8")
+    assert call_args[1]["value"]["error"] == "Test error"
+
+
+def test_consumer_skips_events_before_checkpoint(tmp_path: str) -> None:
+    """Test that consumer skips events before checkpoint on recovery."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        consumer = GameStateConsumer(
+            api_base_url="http://localhost:8000",
+            checkpoint_dir=Path(tmpdir),
+        )
+
+        game_id = "test-game-001"
+
+        # Set checkpoint to 10
+        consumer._update_checkpoint(game_id, 10)
+        consumer._save_checkpoints()
+
+        # Create a new consumer instance to simulate restart
+        consumer2 = GameStateConsumer(
+            api_base_url="http://localhost:8000",
+            checkpoint_dir=Path(tmpdir),
+        )
+
+        # Load checkpoint
+        checkpoint = consumer2._load_checkpoint(game_id)
+        assert checkpoint == 10
