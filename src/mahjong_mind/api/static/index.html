@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MahjongMind Live Viewer</title>
+    <title>MahjongMind Game Viewer</title>
     <style>
         * {
             margin: 0;
@@ -508,7 +508,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🀄 MahjongMind Live Viewer</h1>
+            <h1>🀄 MahjongMind Game Viewer</h1>
             <div class="status-bar">
                 <div class="status-indicator">
                     <span class="status-dot" id="connectionStatus"></span>
@@ -549,9 +549,9 @@
             </div>
             <div class="picker-columns">
                 <div>
-                    <h3>Streaming now</h3>
+                    <h3>Playing now</h3>
                     <div class="game-list" id="liveList">
-                        <div class="list-empty">No games streaming</div>
+                        <div class="list-empty">No games playing</div>
                     </div>
                 </div>
                 <div>
@@ -792,7 +792,7 @@
             renderLive(live) {
                 const el = document.getElementById('liveList');
                 if (!live || live.length === 0) {
-                    el.innerHTML = '<div class="list-empty">No games streaming</div>';
+                    el.innerHTML = '<div class="list-empty">No games playing</div>';
                     return;
                 }
                 el.innerHTML = live
