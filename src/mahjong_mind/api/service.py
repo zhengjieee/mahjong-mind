@@ -184,8 +184,21 @@ class GameEventBroadcaster:
         entry["last_event"] = time.time()
         entry["last_type"] = event_type
 
-    def active_games(self) -> list[dict[str, Any]]:
-        """List games that produced an event recently, newest activity first."""
+    def forget_game(self, game_id: str) -> None:
+        """Drop a game from the playing list the moment it stops.
+
+        The timeout below is only a fallback for a producer that dies without
+        saying so; a game we stopped ourselves should disappear at once.
+        """
+        self.live_games.pop(game_id, None)
+
+    def active_games(self, only: set[str] | None = None) -> list[dict[str, Any]]:
+        """List games that produced an event recently, newest activity first.
+
+        `only` restricts the result to games still known to be running. Events
+        stay in flight briefly after a replay stops, so without this a stopped
+        game reappears the moment one of them lands.
+        """
         now = time.time()
         for game_id, entry in list(self.live_games.items()):
             if now - entry["last_event"] > self.LIVE_GAME_TIMEOUT_SECONDS:
@@ -199,6 +212,7 @@ class GameEventBroadcaster:
                 "seconds_ago": round(now - entry["last_event"], 1),
             }
             for game_id, entry in self.live_games.items()
+            if only is None or game_id in only
         ]
         return sorted(games, key=lambda g: g["seconds_ago"])
 
@@ -459,11 +473,20 @@ async def publish_event(request: GameEventPublish) -> dict[str, str]:
 DATA_DIRECTORY = Path(__file__).parent.parent.parent.parent / "data" / "raw"
 
 
+# 2009 was the parser and pipeline development corpus, and no model was
+# trained, validated, or tested on it. It is excluded from the viewer.
+EXCLUDED_YEARS = {"2009"}
+
+
 def _available_years() -> list[str]:
-    """Year directories present under data/raw."""
+    """Year directories present under data/raw, excluding development corpora."""
     if not DATA_DIRECTORY.exists():
         return []
-    return sorted(p.name for p in DATA_DIRECTORY.iterdir() if p.is_dir() and p.name.isdigit())
+    return sorted(
+        p.name
+        for p in DATA_DIRECTORY.iterdir()
+        if p.is_dir() and p.name.isdigit() and p.name not in EXCLUDED_YEARS
+    )
 
 
 def _recorded_games(year: str, limit: int) -> list[str]:
@@ -484,8 +507,15 @@ async def list_games(year: str | None = None, limit: int = 50) -> dict[str, Any]
     years = _available_years()
     selected = year if year in years else (years[0] if years else None)
 
+    # Annotate each running game with how it advances, so the viewer can show
+    # the right transport controls for a game it did not start itself.
+    live = _broadcaster.active_games(only=set(_active_replays))
+    for game in live:
+        replayer = _active_replays.get(game["game_id"])
+        game["step_mode"] = replayer.step_mode if replayer else False
+
     return {
-        "live": _broadcaster.active_games(),
+        "live": live,
         "years": years,
         "selected_year": selected,
         "recorded": _recorded_games(selected, min(limit, 200)) if selected else [],
@@ -510,6 +540,9 @@ def _replay_worker(
     finally:
         replayer.disconnect()
         _active_replays.pop(game_id, None)
+        # The game is over, so it should leave the playing list immediately
+        # rather than lingering until the activity timeout expires.
+        _broadcaster.forget_game(game_id)
 
 
 def _running_replay(game_id: str) -> HistoricalReplayer:
@@ -533,6 +566,14 @@ async def watch_game(request: WatchRequest) -> dict[str, Any]:
     game_path = DATA_DIRECTORY / year / f"{game_id}.mjson"
     if not game_path.exists():
         raise HTTPException(status_code=404, detail=f"Game not found: {game_id}")
+
+    # Only one game plays at a time, so starting this one retires the rest.
+    # Each is dropped from the registry immediately rather than waiting for
+    # its worker to notice, so it leaves the playing list at once.
+    for other_id in [gid for gid in _active_replays if gid != game_id]:
+        _active_replays.pop(other_id).stop()
+        _broadcaster.forget_game(other_id)
+        logger.info(f"Stopped {other_id} to make way for {game_id}")
 
     replayer = HistoricalReplayer()
     config = ReplayConfig(
@@ -575,6 +616,7 @@ async def resume_game(request: GameControl) -> dict[str, Any]:
 async def stop_game(request: GameControl) -> dict[str, Any]:
     """Stop a replay and free its worker thread."""
     _running_replay(request.game_id).stop()
+    _broadcaster.forget_game(request.game_id)
     return {"status": "stopped", "game_id": request.game_id}
 
 

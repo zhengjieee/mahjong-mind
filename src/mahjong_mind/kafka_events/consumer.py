@@ -106,6 +106,13 @@ class GameStateConsumer:
                 self.process_event(message.value)
         except KeyboardInterrupt:
             logger.info("Consumer interrupted")
+        except KafkaError as e:
+            # A broker restart, a group rebalance, or a failed offset commit
+            # all surface here rather than inside process_event. Say so
+            # loudly: a silent exit looks like the consumer stopped for no
+            # reason.
+            logger.error(f"Kafka connection lost, consumer stopping: {e}")
+            raise
 
     def process_event(self, event_data: dict[str, Any]) -> None:
         """Process a single Kafka event."""
@@ -114,8 +121,15 @@ class GameStateConsumer:
         event_dict = event_data["event"]
 
         try:
-            # Get or create state reconstructor for this game. Kafka's own
-            # consumer-group offsets handle resume, so there is nothing to skip.
+            # A start_game means this game is beginning again, so any state
+            # from an earlier replay of the same id must be discarded. Without
+            # this, replaying a game twice in one session fails on every event
+            # because the reconstructor is still part-way through the first run.
+            if event_dict.get("type") == "start_game":
+                self._reset_game(game_id)
+
+            # Kafka's own consumer-group offsets handle resume, so there is
+            # nothing to skip beyond that.
             if game_id not in self.reconstructors:
                 self.reconstructors[game_id] = StateReconstructor()
 
@@ -150,9 +164,18 @@ class GameStateConsumer:
                 game_id, event_index, event_dict, observation, recommendation, outcome
             )
 
-        except (ValueError, RuntimeError, httpx.HTTPError, KeyError) as e:
+        except Exception as e:  # noqa: BLE001
+            # Deliberately broad. The dead-letter queue exists so that one
+            # unprocessable event cannot end the stream, and narrowing this
+            # once let a TypeError kill the whole consumer.
             logger.error(f"Error processing {game_id} event {event_index}: {e}")
             self._send_to_dlq(game_id, event_index, event_dict, str(e))
+
+    def _reset_game(self, game_id: str) -> None:
+        """Forget everything held for one game, so it can be replayed again."""
+        self.reconstructors.pop(game_id, None)
+        self.pending_predictions.pop(game_id, None)
+        self.last_actor.pop(game_id, None)
 
     def _reconstruct_event(
         self,

@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mahjong_mind.kafka_events.consumer import GameStateConsumer
 
 
@@ -205,3 +207,109 @@ def test_dahai_outcome_rides_the_predictions_topic() -> None:
     assert outcome["rank"] == 2
     assert outcome["top_1"] is False
     assert outcome["top_3"] is True
+
+
+def test_same_game_can_be_replayed_twice() -> None:
+    """A second start_game resets state instead of rejecting every event.
+
+    The consumer holds one StateReconstructor per game id. Without a reset,
+    replaying the same game again sends every event to the DLQ, because the
+    reconstructor is still part-way through the previous run.
+    """
+    consumer = GameStateConsumer(api_base_url="http://localhost:8000")
+    consumer.http_client = MagicMock()
+    producer = MagicMock()
+    consumer.producer = producer
+
+    start_game = {
+        "game_id": "replay-twice",
+        "event_index": 0,
+        "event": {
+            "type": "start_game",
+            "names": ["A", "B", "C", "D"],
+            "kyoku_first": 0,
+            "aka_flag": False,
+        },
+    }
+    start_kyoku = {
+        "game_id": "replay-twice",
+        "event_index": 1,
+        "event": {
+            "type": "start_kyoku",
+            "bakaze": "E",
+            "dora_marker": "1m",
+            "kyoku": 1,
+            "honba": 0,
+            "kyotaku": 0,
+            "oya": 0,
+            "scores": [25000, 25000, 25000, 25000],
+            "tehais": [
+                ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "1s", "E", "S"],
+            ]
+            * 4,
+        },
+    }
+
+    # First run, then the very same events again.
+    for _ in range(2):
+        consumer.process_event(start_game)
+        consumer.process_event(start_kyoku)
+
+    dlq_sends = [
+        call for call in producer.send.call_args_list
+        if call[0][0] == consumer.TOPIC_DLQ
+    ]
+    assert dlq_sends == [], "replaying the same game must not fail"
+
+
+def test_unexpected_error_does_not_kill_the_consumer() -> None:
+    """An event that fails in an unforeseen way goes to the DLQ, not upward.
+
+    process_event once caught only four exception types, so anything else --
+    a TypeError from a malformed field, say -- unwound through the polling
+    loop and stopped the consumer with no obvious cause.
+    """
+    consumer = GameStateConsumer(api_base_url="http://localhost:8000")
+    producer = MagicMock()
+    consumer.producer = producer
+
+    # A tehais list of the wrong shape fails inside the reconstructor rather
+    # than in validation, which is the kind of surprise the DLQ is for.
+    with patch.object(
+        consumer, "_reconstruct_event", side_effect=TypeError("unexpected shape")
+    ):
+        consumer.process_event(
+            {
+                "game_id": "surprise",
+                "event_index": 4,
+                "event": {"type": "tsumo", "actor": 0, "pai": "1m"},
+            }
+        )
+
+    dlq = [c for c in producer.send.call_args_list if c[0][0] == consumer.TOPIC_DLQ]
+    assert len(dlq) == 1
+    assert "unexpected shape" in dlq[0][1]["value"]["error"]
+
+
+def test_kafka_failure_is_reported_before_stopping() -> None:
+    """A lost broker connection is logged, not swallowed into a silent exit."""
+    from kafka.errors import KafkaError  # type: ignore[import-untyped]
+
+    consumer = GameStateConsumer(api_base_url="http://localhost:8000")
+    consumer.http_client = MagicMock()
+
+    class FailingConsumer:
+        """Raises the way kafka-python does on a rebalance or lost broker."""
+
+        def __iter__(self):
+            raise KafkaError("connection lost")
+
+    consumer.consumer = FailingConsumer()
+
+    with patch("mahjong_mind.kafka_events.consumer.logger") as mock_logger:
+        with pytest.raises(KafkaError):
+            consumer.run()
+        assert any(
+            "Kafka connection lost" in str(call)
+            for call in mock_logger.error.call_args_list
+        )

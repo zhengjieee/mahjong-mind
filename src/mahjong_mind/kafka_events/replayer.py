@@ -40,6 +40,9 @@ class HistoricalReplayer:
         # Set by advance() to release one event in step mode.
         self._step = threading.Event()
         self.events_sent = 0
+        # Whether this replay advances on demand, so a UI can show the right
+        # controls for a game it did not start itself.
+        self.step_mode = False
 
     def connect(self) -> None:
         """Connect to Kafka."""
@@ -64,6 +67,7 @@ class HistoricalReplayer:
         if not self.producer:
             raise RuntimeError("Not connected to Kafka; call connect() first")
 
+        self.step_mode = config.step_mode
         event_count = 0
         for parsed in iter_mjai_events(game_path):
             if self._stopped:

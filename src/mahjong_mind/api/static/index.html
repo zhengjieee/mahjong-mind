@@ -5,700 +5,826 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MahjongMind Game Viewer</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --felt: #0f6b4f;
+            --felt-dark: #0a5340;
+            --tile-face: #fdfcf7;
+            --tile-edge: #d8d2c0;
+            --tile-side: #e8b04b;
+            --ink: #2b2b2b;
+            --red: #c0392b;
+            --panel: #ffffff;
+            --muted: #8a8a8a;
         }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1c2733;
+            color: var(--ink);
             min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 20px;
+            padding: 16px;
         }
 
-        .container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            padding: 20px;
-            max-width: 1400px;
-            width: 100%;
+        .layout {
+            max-width: 1500px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            gap: 16px;
+            align-items: start;
         }
 
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #f0f0f0;
-            padding-bottom: 15px;
+        .panel {
+            background: var(--panel);
+            border-radius: 10px;
+            padding: 16px;
         }
 
-        .header h1 {
-            color: #333;
-            font-size: 28px;
+        h2 {
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--muted);
+            font-weight: 700;
             margin-bottom: 10px;
         }
 
-        .status-bar {
-            display: flex;
-            gap: 20px;
-            justify-content: center;
-            align-items: center;
-            flex-wrap: wrap;
-        }
+        /* ---- header ---- */
 
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-        }
-
-        .status-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-
-        .status-dot.connected {
-            background-color: #10b981;
-            animation: pulse 2s infinite;
-        }
-
-        .status-dot.disconnected {
-            background-color: #ef4444;
-        }
-
-        .status-dot.waiting {
-            background-color: #f59e0b;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .game-board {
-            display: grid;
-            grid-template-columns: 1fr 2fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-
-        .board-section {
-            background: #f9fafb;
-            border-radius: 8px;
-            padding: 20px;
-        }
-
-        .board-section h2 {
-            font-size: 16px;
-            color: #666;
-            margin-bottom: 15px;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
-
-        .river-section {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .player-river {
-            margin-bottom: 20px;
-        }
-
-        .player-river h3 {
-            font-size: 13px;
-            color: #999;
-            margin-bottom: 8px;
-            font-weight: 500;
-        }
-
-        .discard-row {
-            display: grid;
-            grid-template-columns: repeat(6, 1fr);
-            gap: 6px;
-            min-height: 60px;
-        }
-
-        .tile {
-            aspect-ratio: 1;
-            background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
-            border: 2px solid #ddd;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 14px;
-            cursor: default;
-            transition: all 0.2s;
-            position: relative;
-        }
-
-        .tile:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .tile.highlight {
-            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-            border-color: #d97706;
-            color: white;
-            font-weight: bold;
-        }
-
-        .tile.riichi {
-            border-width: 3px;
-            border-color: #ef4444;
-        }
-
-        .tile.red {
-            color: #dc2626;
-        }
-
-        .hand-section {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .hand-tiles {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .hand-tile {
-            aspect-ratio: 1.2;
-            background: linear-gradient(135deg, #e0e7ff 0%, #cffafe 100%);
-            border: 2px solid #818cf8;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 16px;
-            position: relative;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-
-        .info-item {
-            background: white;
-            padding: 12px;
-            border-radius: 6px;
-            border-left: 3px solid #667eea;
-        }
-
-        .info-label {
-            font-size: 12px;
-            color: #999;
-            text-transform: uppercase;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .info-value {
-            font-size: 18px;
-            color: #333;
-            font-weight: bold;
-        }
-
-        .predictions-section {
-            background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .predictions-section h3 {
-            font-size: 14px;
-            color: #92400e;
-            margin-bottom: 15px;
-            font-weight: 600;
-        }
-
-        .prediction-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px;
-            background: white;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            border-left: 4px solid #f59e0b;
-        }
-
-        .prediction-tile {
-            font-weight: bold;
-            font-size: 16px;
-            color: #333;
-            min-width: 30px;
-        }
-
-        .prediction-bar {
-            flex: 1;
-            height: 20px;
-            background: #e5e7eb;
-            border-radius: 10px;
-            margin: 0 12px;
-            overflow: hidden;
-        }
-
-        .prediction-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
-            border-radius: 10px;
-            transition: width 0.3s ease;
-        }
-
-        .prediction-percent {
-            font-size: 13px;
-            color: #666;
-            min-width: 50px;
-            text-align: right;
-            font-weight: 600;
-        }
-
-        .opponents-section {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-        }
-
-        .opponent {
-            background: white;
-            padding: 12px;
-            border-radius: 6px;
-            border-top: 3px solid #667eea;
-        }
-
-        .opponent-name {
-            font-size: 12px;
-            color: #999;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
-
-        .opponent-stat {
-            display: flex;
-            justify-content: space-between;
-            font-size: 13px;
-            margin-bottom: 4px;
-        }
-
-        .opponent-stat-label {
-            color: #999;
-        }
-
-        .opponent-stat-value {
-            color: #333;
-            font-weight: 600;
-        }
-
-        .picker {
-            background: #f9fafb;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        .picker-head {
+        .header {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 16px;
             flex-wrap: wrap;
             margin-bottom: 14px;
+            color: #e8eef5;
         }
 
-        .picker h2 {
-            font-size: 16px;
-            color: #666;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
+        .header h1 { font-size: 20px; font-weight: 700; }
 
-        .controls {
+        .status {
             display: flex;
             align-items: center;
             gap: 8px;
             font-size: 13px;
-            color: #666;
+            color: #a9bdd0;
         }
 
-        .controls select {
-            padding: 6px 10px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 13px;
-            background: white;
-            cursor: pointer;
-        }
+        .dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; }
+        .dot.connected { background: #22c55e; }
 
-        .transport {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 0 16px;
-            border-top: 1px solid #eee;
-            margin-bottom: 4px;
-            flex-wrap: wrap;
-        }
+        /* ---- the table ---- */
 
-        .btn {
-            padding: 9px 18px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            background: white;
-            font-size: 14px;
-            font-weight: 600;
-            color: #444;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .btn:hover:not(:disabled) { background: #f3f4f6; }
-
-        .btn:disabled {
-            opacity: 0.45;
-            cursor: not-allowed;
-        }
-
-        .btn-primary {
-            background: #667eea;
-            border-color: #667eea;
-            color: white;
-        }
-
-        .btn-primary:hover:not(:disabled) { background: #5a67d8; }
-
-        .btn-danger {
-            background: white;
-            border-color: #fca5a5;
-            color: #b91c1c;
-        }
-
-        .btn-danger:hover:not(:disabled) { background: #fef2f2; }
-
-        .transport-note {
-            font-size: 13px;
-            color: #999;
-        }
-
-        .picker-columns {
+        .table {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            max-height: 74vh;
+            margin: 0 auto;
+            background:
+                radial-gradient(circle at 50% 45%, var(--felt) 0%, var(--felt-dark) 78%);
+            border: 10px solid #4a2f1b;
+            border-radius: 14px;
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+            grid-template-columns: 1fr 2fr 1fr;
+            grid-template-rows: 1fr 2fr 1fr;
+            grid-template-areas:
+                ".    top    ."
+                "left center right"
+                ".    bottom .";
+            padding: 10px;
+            gap: 4px;
         }
 
-        .picker-columns h3 {
-            font-size: 13px;
-            color: #999;
-            text-transform: uppercase;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
+        .seat { display: flex; align-items: center; justify-content: center; }
+        .seat-top { grid-area: top; }
+        .seat-bottom { grid-area: bottom; }
+        .seat-left { grid-area: left; }
+        .seat-right { grid-area: right; }
 
-        .game-list {
-            max-height: 210px;
-            overflow-y: auto;
-            border: 1px solid #eee;
-            border-radius: 6px;
-            background: white;
-        }
+        /* Each river faces the middle, so opposing seats are turned around. */
+        .seat-top .seat-inner { transform: rotate(180deg); }
+        .seat-left .seat-inner { transform: rotate(90deg); }
+        .seat-right .seat-inner { transform: rotate(-90deg); }
 
-        .game-item {
-            padding: 9px 12px;
-            font-size: 12px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            border-bottom: 1px solid #f3f4f6;
-            cursor: pointer;
+        .seat-inner {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             align-items: center;
-            gap: 10px;
-            transition: background 0.15s;
+            gap: 5px;
         }
 
-        .game-item:last-child { border-bottom: none; }
-        .game-item:hover { background: #eef2ff; }
-
-        .game-item.active {
-            background: #e0e7ff;
-            border-left: 3px solid #667eea;
-            font-weight: 600;
-        }
-
-        .game-badge {
-            font-size: 11px;
-            padding: 2px 7px;
-            border-radius: 10px;
-            background: #d1fae5;
-            color: #065f46;
-            font-family: inherit;
+        .nameplate {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            background: rgba(0, 0, 0, 0.34);
+            color: #f2f6fa;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 12px;
             white-space: nowrap;
         }
 
-        .game-badge.replaying {
+        .nameplate.acting {
+            background: #f4c430;
+            color: #3a2c05;
+            font-weight: 700;
+        }
+
+        .seat-wind {
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .score { opacity: 0.85; font-variant-numeric: tabular-nums; }
+
+        .riichi-stick {
+            width: 26px;
+            height: 4px;
+            border-radius: 2px;
+            background: #fff;
+            position: relative;
+        }
+
+        .riichi-stick::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            margin: auto;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+
+        .river {
+            display: grid;
+            grid-template-columns: repeat(6, auto);
+            gap: 2px;
+            justify-content: center;
+            min-height: 20px;
+        }
+
+        .melds { display: flex; gap: 6px; }
+        .meld { display: flex; gap: 1px; }
+
+        /* ---- centre of the table ---- */
+
+        .center {
+            grid-area: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            color: #eaf3ee;
+        }
+
+        .round-box {
+            background: rgba(0, 0, 0, 0.38);
+            border-radius: 10px;
+            padding: 12px 22px;
+            text-align: center;
+            min-width: 168px;
+        }
+
+        .round-name { font-size: 26px; font-weight: 700; letter-spacing: 0.04em; }
+
+        .round-meta {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-top: 3px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .dora-strip { display: flex; align-items: center; gap: 6px; }
+        .dora-strip .label { font-size: 11px; text-transform: uppercase; opacity: 0.75; }
+
+        /* ---- tiles ---- */
+
+        .tile {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 32px;
+            background: linear-gradient(#fff 60%, var(--tile-face));
+            border: 1px solid var(--tile-edge);
+            border-bottom: 3px solid var(--tile-side);
+            border-radius: 3px;
+            font-size: 21px;
+            line-height: 1;
+            color: var(--ink);
+            user-select: none;
+        }
+
+        .tile.red { color: var(--red); }
+
+        /* The tile that was just played. */
+        .tile.latest {
+            outline: 2px solid #f4c430;
+            outline-offset: 1px;
+        }
+
+        /* Turned sideways in the river to mark the riichi declaration. */
+        .tile.sideways { transform: rotate(90deg); }
+
+        .tile.called { opacity: 0.85; border-bottom-color: #b98a2f; }
+
+        .tile.back {
+            background: linear-gradient(#3f7d68, #2c5c4c);
+            border-color: #244b3e;
+            border-bottom-color: #1d3d33;
+            color: transparent;
+        }
+
+        .tile.lg { width: 34px; height: 46px; font-size: 30px; }
+
+        /* ---- hand ---- */
+
+        .hand-panel { margin-top: 14px; }
+
+        .hand-owner {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .hand { display: flex; gap: 3px; flex-wrap: wrap; align-items: flex-end; }
+        .hand .drawn { margin-left: 14px; }
+
+        /* ---- predictions ---- */
+
+        .prediction {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 7px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .prediction:last-child { border-bottom: none; }
+        .prediction .bar { flex: 1; height: 7px; background: #eceef1; border-radius: 4px; }
+        .prediction .fill { height: 100%; border-radius: 4px; background: #f59e0b; }
+        .prediction .pct {
+            font-size: 12px;
+            color: var(--muted);
+            width: 44px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .prediction.chosen .fill { background: #22c55e; }
+
+        .outcome {
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--muted);
+            min-height: 16px;
+        }
+
+        /* ---- picker and transport ---- */
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+            color: var(--muted);
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        select {
+            padding: 5px 8px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 12px;
+            background: #fff;
+        }
+
+        .game-list {
+            max-height: 190px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 6px;
+        }
+
+        .game-item {
+            padding: 7px 10px;
+            font-size: 11px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            border-bottom: 1px solid #f4f4f4;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .game-item:last-child { border-bottom: none; }
+        .game-item:hover { background: #eef4ff; }
+        .game-item.active { background: #e0e9ff; font-weight: 700; }
+
+        .badge {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 9px;
             background: #fef3c7;
             color: #92400e;
         }
 
-        .list-empty {
+        .list-empty { padding: 16px; text-align: center; color: #bbb; font-size: 12px; }
+
+        .transport { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+        .btn {
+            padding: 7px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn:hover:not(:disabled) { background: #f5f6f8; }
+        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-primary { background: #3b5bdb; border-color: #3b5bdb; color: #fff; }
+        .btn-primary:hover:not(:disabled) { background: #354fc4; }
+        .btn-danger { border-color: #f2b8b5; color: #b3261e; }
+
+        .waiting {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #cfe3d9;
+            font-size: 14px;
+            text-align: center;
             padding: 20px;
-            text-align: center;
-            color: #bbb;
-            font-size: 12px;
         }
 
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #999;
-        }
-
-        .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 15px;
-        }
-
-        .empty-state p {
-            font-size: 16px;
-        }
-
-        @media (max-width: 1200px) {
-            .game-board {
-                grid-template-columns: 1fr;
-            }
-
-            .info-grid {
-                grid-template-columns: repeat(3, 1fr);
-            }
-        }
-
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 20px;
-            }
-
-            .hand-tiles {
-                grid-template-columns: repeat(3, 1fr);
-            }
-
-            .opponents-section {
-                grid-template-columns: 1fr;
-            }
+        @media (max-width: 1100px) {
+            .layout { grid-template-columns: minmax(0, 1fr); }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🀄 MahjongMind Game Viewer</h1>
-            <div class="status-bar">
-                <div class="status-indicator">
-                    <span class="status-dot" id="connectionStatus"></span>
-                    <span id="connectionText">Connecting...</span>
+    <div class="layout">
+        <div>
+            <div class="header">
+                <h1>🀄︎ MahjongMind Game Viewer</h1>
+                <div class="status">
+                    <span class="dot" id="dot"></span>
+                    <span id="connectionText">Connecting…</span>
+                    <span id="gameStatusText"></span>
                 </div>
-                <div class="status-indicator">
-                    <span id="gameStatusText">Waiting for game...</span>
+            </div>
+
+            <div class="table" id="table">
+                <div class="seat seat-top"><div class="seat-inner" id="seat-2"></div></div>
+                <div class="seat seat-left"><div class="seat-inner" id="seat-3"></div></div>
+                <div class="center" id="center"></div>
+                <div class="seat seat-right"><div class="seat-inner" id="seat-1"></div></div>
+                <div class="seat seat-bottom"><div class="seat-inner" id="seat-0"></div></div>
+                <div class="waiting" id="waiting">
+                    Pick a recorded game to begin.
                 </div>
+            </div>
+
+            <div class="panel hand-panel" id="handPanel" style="display:none">
+                <h2>Hand</h2>
+                <div class="hand-owner" id="handOwner"></div>
+                <div class="hand" id="hand"></div>
             </div>
         </div>
 
-        <div class="picker">
-            <div class="picker-head">
+        <div>
+            <div class="panel" style="margin-bottom:16px">
+                <h2>Model predictions</h2>
+                <div id="predictions"><div class="list-empty">Waiting for a draw…</div></div>
+                <div class="outcome" id="outcome"></div>
+            </div>
+
+            <div class="panel">
                 <h2>Choose a game</h2>
                 <div class="controls">
                     <label for="yearSelect">Year</label>
                     <select id="yearSelect"></select>
                     <label for="modeSelect">Mode</label>
                     <select id="modeSelect">
-                        <option value="step" selected>Step — click Next</option>
-                        <option value="auto">Auto — timed</option>
+                        <option value="step" selected>Step</option>
+                        <option value="auto">Auto</option>
                     </select>
                     <label for="speedSelect" id="speedLabel" style="display:none">Speed</label>
                     <select id="speedSelect" style="display:none">
-                        <option value="0.5">0.5x — slow</option>
-                        <option value="1" selected>1x — normal</option>
+                        <option value="0.5">0.5x</option>
+                        <option value="1" selected>1x</option>
                         <option value="2">2x</option>
                         <option value="4">4x</option>
                     </select>
                 </div>
-            </div>
 
-            <div class="transport" id="transport" style="display:none">
-                <button class="btn btn-primary" id="nextBtn">Next event ▶</button>
-                <button class="btn" id="pauseBtn" style="display:none">Pause</button>
-                <button class="btn btn-danger" id="stopBtn">Stop</button>
-                <span class="transport-note" id="transportNote"></span>
-            </div>
-            <div class="picker-columns">
-                <div>
-                    <h3>Playing now</h3>
-                    <div class="game-list" id="liveList">
-                        <div class="list-empty">No games playing</div>
-                    </div>
+                <div class="transport" id="transport" style="display:none">
+                    <button class="btn btn-primary" id="nextBtn">Next event ▶</button>
+                    <button class="btn" id="pauseBtn" style="display:none">Pause</button>
+                    <button class="btn btn-danger" id="stopBtn">Stop</button>
                 </div>
-                <div>
-                    <h3>Recorded — click to start</h3>
-                    <div class="game-list" id="recordedList">
-                        <div class="list-empty">Loading…</div>
-                    </div>
+
+                <h2 style="margin-top:14px">Playing now</h2>
+                <div class="game-list" id="liveList">
+                    <div class="list-empty">No games playing</div>
+                </div>
+
+                <h2 style="margin-top:14px">Recorded</h2>
+                <div class="game-list" id="recordedList">
+                    <div class="list-empty">Loading…</div>
                 </div>
             </div>
-        </div>
-
-        <div id="gameContent" style="display: none;">
-            <div class="game-board">
-                <!-- Left: Discard Rivers -->
-                <div class="board-section river-section">
-                    <h2>Discard Rivers</h2>
-                    <div class="player-river">
-                        <h3>Player 0 (You)</h3>
-                        <div class="discard-row" id="river-0"></div>
-                    </div>
-                    <div class="player-river">
-                        <h3>Player 1</h3>
-                        <div class="discard-row" id="river-1"></div>
-                    </div>
-                    <div class="player-river">
-                        <h3>Player 2</h3>
-                        <div class="discard-row" id="river-2"></div>
-                    </div>
-                    <div class="player-river">
-                        <h3>Player 3</h3>
-                        <div class="discard-row" id="river-3"></div>
-                    </div>
-                </div>
-
-                <!-- Center: Hand and Info -->
-                <div class="board-section">
-                    <h2>Your Hand</h2>
-                    <div class="hand-tiles" id="handTiles"></div>
-
-                    <h2 style="margin-top: 20px;">Game Info</h2>
-                    <div class="info-grid">
-                        <div class="info-item">
-                            <div class="info-label">Wind</div>
-                            <div class="info-value" id="windInfo">-</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="info-label">Round</div>
-                            <div class="info-value" id="roundInfo">-</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="info-label">Dora</div>
-                            <div class="info-value" id="doraInfo">-</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="info-label">Draws</div>
-                            <div class="info-value" id="drawsInfo">-</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="info-label">Honba</div>
-                            <div class="info-value" id="honbaInfo">-</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="info-label">Kyotaku</div>
-                            <div class="info-value" id="kyotakuInfo">-</div>
-                        </div>
-                    </div>
-
-                    <h2 style="margin-top: 20px;">Model Predictions</h2>
-                    <div class="predictions-section">
-                        <h3>Top 3 Recommended Discards</h3>
-                        <div id="predictions"></div>
-                    </div>
-                </div>
-
-                <!-- Right: Scores and Opponents -->
-                <div class="board-section">
-                    <h2>Scores</h2>
-                    <div class="info-grid" style="grid-template-columns: 1fr;">
-                        <div class="info-item" id="score-0"></div>
-                        <div class="info-item" id="score-1"></div>
-                        <div class="info-item" id="score-2"></div>
-                        <div class="info-item" id="score-3"></div>
-                    </div>
-
-                    <h2 style="margin-top: 20px;">Opponents</h2>
-                    <div class="opponents-section">
-                        <div class="opponent" id="opponent-1"></div>
-                        <div class="opponent" id="opponent-2"></div>
-                        <div class="opponent" id="opponent-3"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="emptyState" class="empty-state">
-            <div class="empty-state-icon">🎮</div>
-            <p>Waiting for game events...</p>
-            <p style="font-size: 13px; color: #ccc; margin-top: 10px;">Make sure the game is streaming events to Kafka</p>
         </div>
     </div>
 
     <script>
+        // Unicode has a tile for every face, so no image assets are needed.
+        // U+FE0E forces text rendering; without it the dragons show as emoji.
+        const TEXT = '︎';
+        const GLYPHS = {
+            '1m': '🀇', '2m': '🀈', '3m': '🀉', '4m': '🀊', '5m': '🀋',
+            '6m': '🀌', '7m': '🀍', '8m': '🀎', '9m': '🀏',
+            '1s': '🀐', '2s': '🀑', '3s': '🀒', '4s': '🀓', '5s': '🀔',
+            '6s': '🀕', '7s': '🀖', '8s': '🀗', '9s': '🀘',
+            '1p': '🀙', '2p': '🀚', '3p': '🀛', '4p': '🀜', '5p': '🀝',
+            '6p': '🀞', '7p': '🀟', '8p': '🀠', '9p': '🀡',
+            'E': '🀀', 'S': '🀁', 'W': '🀂', 'N': '🀃',
+            'C': '🀄', 'F': '🀅', 'P': '🀆',
+            // Red fives share the five's face and are coloured by CSS.
+            '5mr': '🀋', '5pr': '🀝', '5sr': '🀔',
+        };
+        const WINDS = ['E', 'S', 'W', 'N'];
+        const WIND_NAMES = { E: 'East', S: 'South', W: 'West', N: 'North' };
+
+        function tileEl(tile, classes = []) {
+            const el = document.createElement('span');
+            el.className = ['tile', ...classes].join(' ');
+            if (tile) {
+                el.textContent = (GLYPHS[tile] || '?') + TEXT;
+                if (tile.endsWith('r')) el.classList.add('red');
+                el.title = tile;
+            }
+            return el;
+        }
+
         class GameViewer {
             constructor() {
                 this.ws = null;
-                this.gameState = null;
+                this.state = null;
                 this.predictions = null;
-                this.lastDiscardIndex = -1;
-
-                this.tileNames = {
-                    m: '筒', p: '索', s: '万',
-                    E: '東', S: '南', W: '西', N: '北',
-                    Z: '中', F: '發', B: '白'
-                };
-
+                this.lastOutcome = null;
                 this.watching = null;
                 this.years = [];
+                this.stepMode = true;
+                this.paused = false;
+                this.playing = new Map();
 
                 this.connect();
                 this.initPicker();
             }
 
-            // --- Game selection -------------------------------------------------
+            // --- connection -------------------------------------------------
+
+            connect() {
+                const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                this.ws = new WebSocket(`${scheme}//${location.host}/ws`);
+                this.ws.onopen = () => {
+                    this.setStatus('connected', 'Connected');
+                    if (this.watching) this.subscribe(this.watching);
+                };
+                this.ws.onmessage = (e) => this.onMessage(e);
+                this.ws.onclose = () => {
+                    this.setStatus('', 'Disconnected — retrying');
+                    setTimeout(() => this.connect(), 3000);
+                };
+            }
+
+            subscribe(gameId) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ action: 'subscribe', game_id: gameId }));
+                }
+            }
+
+            setStatus(cls, text) {
+                document.getElementById('dot').className = `dot ${cls}`;
+                document.getElementById('connectionText').textContent = text;
+            }
+
+            onMessage(event) {
+                let message;
+                try { message = JSON.parse(event.data); } catch { return; }
+                if (!message.event) return;
+
+                if (message.observation) this.state = message.observation;
+                if (message.recommendations) {
+                    this.predictions = message.recommendations;
+                    this.lastOutcome = null;
+                }
+                if (message.outcome) this.lastOutcome = message.outcome;
+
+                this.lastEvent = message.event;
+                document.getElementById('waiting').style.display = 'none';
+                document.getElementById('gameStatusText').textContent =
+                    `· ${message.game_id} · event ${message.event_index}`;
+
+                this.render();
+            }
+
+            // --- rendering --------------------------------------------------
+
+            render() {
+                if (!this.state) return;
+                for (let seat = 0; seat < 4; seat++) this.renderSeat(seat);
+                this.renderCenter();
+                this.renderHand();
+                this.renderPredictions();
+            }
+
+            renderSeat(seat) {
+                const el = document.getElementById(`seat-${seat}`);
+                const player = this.state.players[seat];
+                const acting = seat === this.state.observer;
+                el.innerHTML = '';
+
+                const plate = document.createElement('div');
+                plate.className = `nameplate${acting ? ' acting' : ''}`;
+                const wind = WINDS[(seat - this.state.dealer + 4) % 4];
+                plate.innerHTML =
+                    `<span class="seat-wind">${wind}</span>` +
+                    `<span>${this.state.names[seat]}</span>` +
+                    `<span class="score">${this.state.scores[seat]}</span>`;
+                if (player.riichi === 'accepted') {
+                    const stick = document.createElement('span');
+                    stick.className = 'riichi-stick';
+                    plate.appendChild(stick);
+                }
+                el.appendChild(plate);
+
+                if (player.melds && player.melds.length) {
+                    const melds = document.createElement('div');
+                    melds.className = 'melds';
+                    for (const meld of player.melds) {
+                        const group = document.createElement('div');
+                        group.className = 'meld';
+                        for (const tile of meld.tiles) {
+                            group.appendChild(tileEl(tile, ['called']));
+                        }
+                        melds.appendChild(group);
+                    }
+                    el.appendChild(melds);
+                }
+
+                const river = document.createElement('div');
+                river.className = 'river';
+                const discards = player.discards || [];
+                discards.forEach((discard, index) => {
+                    const classes = [];
+                    if (discard.riichi) classes.push('sideways');
+                    if (discard.called) classes.push('called');
+                    if (index === discards.length - 1 && this.isLatestDiscard(seat)) {
+                        classes.push('latest');
+                    }
+                    river.appendChild(tileEl(discard.tile, classes));
+                });
+                el.appendChild(river);
+            }
+
+            isLatestDiscard(seat) {
+                return this.lastEvent
+                    && this.lastEvent.type === 'dahai'
+                    && this.lastEvent.actor === seat;
+            }
+
+            renderCenter() {
+                const s = this.state;
+                const el = document.getElementById('center');
+                el.innerHTML = '';
+
+                const box = document.createElement('div');
+                box.className = 'round-box';
+                const meta = [`${s.draws_remaining} left`];
+                if (s.honba) meta.push(`${s.honba} honba`);
+                if (s.kyotaku) meta.push(`${s.kyotaku} stick${s.kyotaku > 1 ? 's' : ''}`);
+                box.innerHTML =
+                    `<div class="round-name">${WIND_NAMES[s.bakaze] || s.bakaze} ${s.kyoku}</div>` +
+                    `<div class="round-meta">${meta.join(' · ')}</div>`;
+                el.appendChild(box);
+
+                const dora = document.createElement('div');
+                dora.className = 'dora-strip';
+                const label = document.createElement('span');
+                label.className = 'label';
+                label.textContent = 'Dora';
+                dora.appendChild(label);
+                for (const marker of s.dora_markers || []) dora.appendChild(tileEl(marker));
+                el.appendChild(dora);
+            }
+
+            renderHand() {
+                const panel = document.getElementById('handPanel');
+                const hand = document.getElementById('hand');
+                if (!this.state.own_hand) { panel.style.display = 'none'; return; }
+
+                panel.style.display = '';
+                document.getElementById('handOwner').textContent =
+                    `${this.state.names[this.state.observer]} — the player to act`;
+
+                hand.innerHTML = '';
+                // Sort so the hand reads the way a player would hold it.
+                const order = Object.keys(GLYPHS);
+                const sorted = [...this.state.own_hand].sort(
+                    (a, b) => order.indexOf(a) - order.indexOf(b)
+                );
+                for (const tile of sorted) hand.appendChild(tileEl(tile, ['lg']));
+
+                if (this.state.own_last_draw) {
+                    hand.appendChild(tileEl(this.state.own_last_draw, ['lg', 'drawn']));
+                }
+            }
+
+            renderPredictions() {
+                const el = document.getElementById('predictions');
+                const outcome = document.getElementById('outcome');
+                const actions = this.predictions && this.predictions.top_3_actions;
+
+                if (!actions || !actions.length) {
+                    el.innerHTML = '<div class="list-empty">Waiting for a draw…</div>';
+                    outcome.textContent = '';
+                    return;
+                }
+
+                el.innerHTML = '';
+                for (const action of actions) {
+                    const pct = (action.probability * 100).toFixed(1);
+                    const chosen = this.lastOutcome
+                        && this.lastOutcome.actual_tile === action.tile;
+
+                    const row = document.createElement('div');
+                    row.className = `prediction${chosen ? ' chosen' : ''}`;
+                    row.appendChild(tileEl(action.tile));
+
+                    const bar = document.createElement('div');
+                    bar.className = 'bar';
+                    const fill = document.createElement('div');
+                    fill.className = 'fill';
+                    fill.style.width = `${pct}%`;
+                    bar.appendChild(fill);
+                    row.appendChild(bar);
+
+                    const label = document.createElement('span');
+                    label.className = 'pct';
+                    label.textContent = `${pct}%`;
+                    row.appendChild(label);
+
+                    el.appendChild(row);
+                }
+
+                if (this.lastOutcome) {
+                    const { rank, actual_tile } = this.lastOutcome;
+                    outcome.textContent = rank
+                        ? `Player discarded ${actual_tile} — the model's #${rank} pick.`
+                        : `Player discarded ${actual_tile} — not in the model's top 3.`;
+                } else {
+                    outcome.textContent = '';
+                }
+            }
+
+            // --- picker -----------------------------------------------------
 
             initPicker() {
-                document.getElementById('yearSelect').addEventListener('change', (e) => {
-                    this.refreshGames(e.target.value);
-                });
+                document.getElementById('yearSelect')
+                    .addEventListener('change', (e) => this.refreshGames(e.target.value));
 
-                // Speed only applies to timed playback.
-                const modeSelect = document.getElementById('modeSelect');
-                modeSelect.addEventListener('change', () => {
-                    const auto = modeSelect.value === 'auto';
+                const mode = document.getElementById('modeSelect');
+                mode.addEventListener('change', () => {
+                    const auto = mode.value === 'auto';
                     document.getElementById('speedSelect').style.display = auto ? '' : 'none';
                     document.getElementById('speedLabel').style.display = auto ? '' : 'none';
                 });
 
                 document.getElementById('nextBtn').addEventListener('click', () => this.step());
                 document.getElementById('stopBtn').addEventListener('click', () => this.stop());
-                document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+                document.getElementById('pauseBtn')
+                    .addEventListener('click', () => this.togglePause());
 
                 this.refreshGames();
-                // Keep the "streaming now" column current.
-                setInterval(() => this.refreshLiveOnly(), 4000);
+                setInterval(() => this.refreshLive(), 4000);
             }
 
-            // --- Transport ------------------------------------------------------
+            async refreshGames(year) {
+                try {
+                    const url = year ? `/api/games?year=${encodeURIComponent(year)}` : '/api/games';
+                    const data = await (await fetch(url)).json();
+
+                    if (!this.years.length && data.years.length) {
+                        this.years = data.years;
+                        const select = document.getElementById('yearSelect');
+                        select.innerHTML = data.years
+                            .map((y) => `<option value="${y}">${y}</option>`).join('');
+                        select.value = data.selected_year;
+                    }
+                    this.renderList('recordedList', data.recorded.map((id) => ({
+                        game_id: id,
+                        badge: (data.replaying || []).includes(id) ? 'playing' : null,
+                    })), (id) => this.startReplay(id), 'No recorded games found');
+                    this.renderLive(data.live);
+                } catch (e) {
+                    console.error('Could not load games:', e);
+                }
+            }
+
+            async refreshLive() {
+                try {
+                    const data = await (await fetch('/api/games?limit=0')).json();
+                    this.renderLive(data.live);
+                } catch { /* transient */ }
+            }
+
+            renderLive(live) {
+                this.playing = new Map((live || []).map((g) => [g.game_id, g]));
+                this.renderList('liveList', (live || []).map((g) => ({
+                    game_id: g.game_id,
+                    badge: `${g.event_count} events`,
+                })), (id) => this.joinLive(id), 'No games playing');
+            }
+
+            renderList(elementId, items, onClick, emptyText) {
+                const el = document.getElementById(elementId);
+                if (!items.length) {
+                    el.innerHTML = `<div class="list-empty">${emptyText}</div>`;
+                    return;
+                }
+                el.innerHTML = items.map((item) => `
+                    <div class="game-item ${item.game_id === this.watching ? 'active' : ''}"
+                         data-game="${item.game_id}">
+                        <span>${item.game_id}</span>
+                        ${item.badge ? `<span class="badge">${item.badge}</span>` : ''}
+                    </div>`).join('');
+                el.querySelectorAll('.game-item').forEach((node) => {
+                    node.addEventListener('click', () => onClick(node.dataset.game));
+                });
+            }
+
+            watch(gameId) {
+                this.watching = gameId;
+                this.state = null;
+                this.predictions = null;
+                this.lastOutcome = null;
+                this.subscribe(gameId);
+                document.querySelectorAll('.game-item').forEach((node) => {
+                    node.classList.toggle('active', node.dataset.game === gameId);
+                });
+            }
+
+            joinLive(gameId) {
+                if (gameId === this.watching) return;
+                this.watch(gameId);
+                const game = this.playing && this.playing.get(gameId);
+                if (game) {
+                    this.showTransport(game.step_mode);
+                } else {
+                    this.hideTransport();
+                }
+            }
+
+            async startReplay(gameId) {
+                const speed = parseFloat(document.getElementById('speedSelect').value);
+                const stepMode = document.getElementById('modeSelect').value === 'step';
+                this.watch(gameId);
+                document.getElementById('waiting').style.display = '';
+                document.getElementById('waiting').textContent = 'Starting…';
+
+                try {
+                    const res = await fetch('/api/watch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ game_id: gameId, speed, step_mode: stepMode }),
+                    });
+                    if (!res.ok) {
+                        document.getElementById('waiting').textContent = 'Could not start that game.';
+                        return;
+                    }
+                    this.showTransport(stepMode);
+                    document.getElementById('waiting').textContent = stepMode
+                        ? 'Click Next event to play the first move.'
+                        : 'Playing…';
+                } catch {
+                    document.getElementById('waiting').textContent = 'Could not reach the server.';
+                }
+            }
+
+            // --- transport --------------------------------------------------
 
             showTransport(stepMode) {
                 this.stepMode = stepMode;
@@ -707,9 +833,6 @@
                 document.getElementById('nextBtn').style.display = stepMode ? '' : 'none';
                 document.getElementById('pauseBtn').style.display = stepMode ? 'none' : '';
                 document.getElementById('pauseBtn').textContent = 'Pause';
-                document.getElementById('transportNote').textContent = stepMode
-                    ? 'Each click sends one event through the model.'
-                    : '';
             }
 
             hideTransport() {
@@ -725,9 +848,7 @@
                         body: JSON.stringify({ game_id: this.watching }),
                     });
                     return res.ok ? res : null;
-                } catch (e) {
-                    return null;
-                }
+                } catch { return null; }
             }
 
             async step() {
@@ -735,361 +856,30 @@
                 btn.disabled = true;
                 const res = await this.control('/api/step');
                 if (!res) {
-                    document.getElementById('transportNote').textContent =
-                        'This game is no longer running.';
                     this.hideTransport();
                     return;
                 }
-                // Re-enable shortly; the event needs a round trip through the model.
                 setTimeout(() => { btn.disabled = false; }, 250);
             }
 
             async togglePause() {
-                const btn = document.getElementById('pauseBtn');
                 const res = await this.control(this.paused ? '/api/resume' : '/api/pause');
                 if (!res) return;
                 this.paused = !this.paused;
-                btn.textContent = this.paused ? 'Resume' : 'Pause';
+                document.getElementById('pauseBtn').textContent =
+                    this.paused ? 'Resume' : 'Pause';
             }
 
             async stop() {
                 await this.control('/api/stop');
-                document.getElementById('gameStatusText').textContent = 'Stopped';
                 this.hideTransport();
+                document.getElementById('waiting').style.display = '';
+                document.getElementById('waiting').textContent = 'Stopped. Pick another game.';
                 this.refreshGames(document.getElementById('yearSelect').value);
-            }
-
-            async refreshGames(year) {
-                try {
-                    const url = year ? `/api/games?year=${encodeURIComponent(year)}` : '/api/games';
-                    const data = await (await fetch(url)).json();
-
-                    if (this.years.length === 0 && data.years.length) {
-                        this.years = data.years;
-                        const sel = document.getElementById('yearSelect');
-                        sel.innerHTML = data.years
-                            .map((y) => `<option value="${y}">${y}</option>`)
-                            .join('');
-                        sel.value = data.selected_year;
-                    }
-
-                    this.renderRecorded(data.recorded, data.replaying);
-                    this.renderLive(data.live);
-                } catch (e) {
-                    console.error('Could not load games:', e);
-                }
-            }
-
-            async refreshLiveOnly() {
-                try {
-                    const data = await (await fetch('/api/games?limit=0')).json();
-                    this.renderLive(data.live);
-                } catch (e) {
-                    /* transient; the next tick will retry */
-                }
-            }
-
-            renderLive(live) {
-                const el = document.getElementById('liveList');
-                if (!live || live.length === 0) {
-                    el.innerHTML = '<div class="list-empty">No games playing</div>';
-                    return;
-                }
-                el.innerHTML = live
-                    .map((g) => `
-                        <div class="game-item ${g.game_id === this.watching ? 'active' : ''}"
-                             data-game="${g.game_id}">
-                            <span>${g.game_id}</span>
-                            <span class="game-badge">${g.event_count} events</span>
-                        </div>`)
-                    .join('');
-                el.querySelectorAll('.game-item').forEach((item) => {
-                    item.addEventListener('click', () => this.joinLive(item.dataset.game));
-                });
-            }
-
-            /** Watch a game already in flight. We may not control this one. */
-            joinLive(gameId) {
-                if (gameId === this.watching) return;
-                this.watch(gameId);
-                this.hideTransport();
-                document.getElementById('gameStatusText').textContent =
-                    `Watching ${gameId}`;
-            }
-
-            renderRecorded(recorded, replaying) {
-                const el = document.getElementById('recordedList');
-                if (!recorded || recorded.length === 0) {
-                    el.innerHTML = '<div class="list-empty">No recorded games found</div>';
-                    return;
-                }
-                const busy = new Set(replaying || []);
-                el.innerHTML = recorded
-                    .map((id) => `
-                        <div class="game-item ${id === this.watching ? 'active' : ''}"
-                             data-game="${id}">
-                            <span>${id}</span>
-                            ${busy.has(id) ? '<span class="game-badge replaying">playing</span>' : ''}
-                        </div>`)
-                    .join('');
-                el.querySelectorAll('.game-item').forEach((item) => {
-                    item.addEventListener('click', () => this.startReplay(item.dataset.game));
-                });
-            }
-
-            async startReplay(gameId) {
-                const speed = parseFloat(document.getElementById('speedSelect').value);
-                const stepMode = document.getElementById('modeSelect').value === 'step';
-                this.watch(gameId);
-                document.getElementById('gameStatusText').textContent = 'Starting…';
-                try {
-                    const res = await fetch('/api/watch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ game_id: gameId, speed, step_mode: stepMode }),
-                    });
-                    if (!res.ok) {
-                        document.getElementById('gameStatusText').textContent =
-                            'Could not start that game';
-                        return;
-                    }
-                    this.showTransport(stepMode);
-                    document.getElementById('gameStatusText').textContent = stepMode
-                        ? 'Ready — click Next to play the first event'
-                        : `Playing at ${speed}x…`;
-                } catch (e) {
-                    document.getElementById('gameStatusText').textContent = 'Could not reach server';
-                }
-            }
-
-            /** Watch one game: the server sends us only its events. */
-            watch(gameId) {
-                this.watching = gameId;
-                this.gameState = null;
-                this.predictions = null;
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({ action: 'subscribe', game_id: gameId }));
-                }
-                document.querySelectorAll('.game-item').forEach((item) => {
-                    item.classList.toggle('active', item.dataset.game === gameId);
-                });
-            }
-
-            connect() {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const url = `${protocol}//${window.location.host}/ws`;
-
-                this.ws = new WebSocket(url);
-                this.ws.onopen = () => this.onConnected();
-                this.ws.onmessage = (event) => this.onMessage(event);
-                this.ws.onerror = () => this.onError();
-                this.ws.onclose = () => this.onDisconnected();
-            }
-
-            onConnected() {
-                this.updateConnectionStatus('connected', 'Connected');
-                console.log('WebSocket connected');
-                // Restore our subscription after a reconnect.
-                if (this.watching) {
-                    this.ws.send(JSON.stringify({ action: 'subscribe', game_id: this.watching }));
-                }
-            }
-
-            onDisconnected() {
-                this.updateConnectionStatus('disconnected', 'Disconnected');
-                console.log('WebSocket disconnected');
-                setTimeout(() => this.connect(), 3000);
-            }
-
-            onError() {
-                this.updateConnectionStatus('disconnected', 'Connection Error');
-                console.error('WebSocket error');
-            }
-
-            onMessage(event) {
-                try {
-                    const message = JSON.parse(event.data);
-                    if (message.event) {
-                        this.handleGameEvent(message);
-                    }
-                } catch (e) {
-                    console.error('Error parsing message:', e);
-                }
-            }
-
-            handleGameEvent(message) {
-                const gameId = message.game_id;
-                const eventIndex = message.event_index;
-                const event = message.event;
-                const observation = message.observation;
-                const recommendations = message.recommendations;
-
-                // Update game state
-                if (observation) {
-                    this.gameState = observation;
-                    this.render();
-                }
-
-                // Update predictions
-                if (recommendations) {
-                    this.predictions = recommendations;
-                    this.renderPredictions();
-                }
-
-                // Track if this was a discard (for highlighting)
-                if (event.type === 'dahai') {
-                    this.lastDiscardIndex = eventIndex;
-                }
-
-                const hand = observation ? ` — hand ${observation.hand_index + 1}` : '';
-                document.getElementById('gameStatusText').textContent =
-                    `${gameId}${hand} · event ${eventIndex}`;
-                document.getElementById('gameContent').style.display = '';
-                document.getElementById('emptyState').style.display = 'none';
-            }
-
-            updateConnectionStatus(status, text) {
-                const dot = document.getElementById('connectionStatus');
-                dot.className = `status-dot ${status}`;
-                document.getElementById('connectionText').textContent = text;
-            }
-
-            render() {
-                if (!this.gameState) return;
-
-                this.renderRivers();
-                this.renderHand();
-                this.renderInfo();
-                this.renderScores();
-                this.renderOpponents();
-            }
-
-            renderRivers() {
-                if (!this.gameState.players) return;
-
-                for (let playerIdx = 0; playerIdx < 4; playerIdx++) {
-                    const player = this.gameState.players[playerIdx];
-                    const riverEl = document.getElementById(`river-${playerIdx}`);
-                    riverEl.innerHTML = '';
-
-                    if (player.discards) {
-                        player.discards.forEach((discard, idx) => {
-                            const tile = this.createTileElement(discard.tile, discard.riichi);
-                            if (idx === player.discards.length - 1) {
-                                tile.classList.add('highlight');
-                            }
-                            riverEl.appendChild(tile);
-                        });
-                    }
-                }
-            }
-
-            renderHand() {
-                const handEl = document.getElementById('handTiles');
-                handEl.innerHTML = '';
-
-                if (this.gameState.own_hand) {
-                    this.gameState.own_hand.forEach((tile) => {
-                        const tileEl = this.createTileElement(tile, false);
-                        tileEl.className = 'hand-tile';
-                        handEl.appendChild(tileEl);
-                    });
-                }
-
-                if (this.gameState.own_last_draw) {
-                    const lastDrawEl = this.createTileElement(this.gameState.own_last_draw, false);
-                    lastDrawEl.className = 'hand-tile';
-                    lastDrawEl.style.borderColor = '#10b981';
-                    handEl.appendChild(lastDrawEl);
-                }
-            }
-
-            renderInfo() {
-                document.getElementById('windInfo').textContent = this.gameState.bakaze || '-';
-                document.getElementById('roundInfo').textContent = `${this.gameState.kyoku || 1}`;
-                document.getElementById('doraInfo').textContent = this.gameState.dora_markers?.join(' ') || '-';
-                document.getElementById('drawsInfo').textContent = this.gameState.draws_remaining || '-';
-                document.getElementById('honbaInfo').textContent = this.gameState.honba || 0;
-                document.getElementById('kyotakuInfo').textContent = this.gameState.kyotaku || 0;
-            }
-
-            renderScores() {
-                if (!this.gameState.scores || !this.gameState.names) return;
-
-                for (let i = 0; i < 4; i++) {
-                    const scoreEl = document.getElementById(`score-${i}`);
-                    scoreEl.innerHTML = `
-                        <div class="info-label">${this.gameState.names[i]}</div>
-                        <div class="info-value">${this.gameState.scores[i]}</div>
-                    `;
-                }
-            }
-
-            renderOpponents() {
-                if (!this.gameState.players || !this.gameState.names) return;
-
-                for (let i = 1; i < 4; i++) {
-                    const opp = this.gameState.players[i];
-                    const oppEl = document.getElementById(`opponent-${i}`);
-                    const tileCount = opp.concealed_tile_count;
-                    const riichi = opp.riichi === 'accepted' ? '🚩 Riichi' : '';
-
-                    oppEl.innerHTML = `
-                        <div class="opponent-name">${this.gameState.names[i]} ${riichi}</div>
-                        <div class="opponent-stat">
-                            <span class="opponent-stat-label">Concealed</span>
-                            <span class="opponent-stat-value">${tileCount}</span>
-                        </div>
-                        <div class="opponent-stat">
-                            <span class="opponent-stat-label">Discards</span>
-                            <span class="opponent-stat-value">${opp.discards?.length || 0}</span>
-                        </div>
-                        <div class="opponent-stat">
-                            <span class="opponent-stat-label">Melds</span>
-                            <span class="opponent-stat-value">${opp.melds?.length || 0}</span>
-                        </div>
-                    `;
-                }
-            }
-
-            renderPredictions() {
-                const predEl = document.getElementById('predictions');
-                predEl.innerHTML = '';
-
-                if (!this.predictions || !this.predictions.top_3_actions) return;
-
-                this.predictions.top_3_actions.forEach((action) => {
-                    const percent = (action.probability * 100).toFixed(1);
-                    const item = document.createElement('div');
-                    item.className = 'prediction-item';
-                    item.innerHTML = `
-                        <div class="prediction-tile">${action.tile}</div>
-                        <div class="prediction-bar">
-                            <div class="prediction-fill" style="width: ${percent}%"></div>
-                        </div>
-                        <div class="prediction-percent">${percent}%</div>
-                    `;
-                    predEl.appendChild(item);
-                });
-            }
-
-            createTileElement(tile, riichi) {
-                const tileEl = document.createElement('div');
-                tileEl.className = 'tile';
-                if (riichi) tileEl.classList.add('riichi');
-                if (tile.includes('r')) tileEl.classList.add('red');
-
-                // Format tile display
-                const display = tile.replace('r', '');
-                tileEl.textContent = display;
-                return tileEl;
             }
         }
 
-        // Initialize viewer when page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            new GameViewer();
-        });
+        document.addEventListener('DOMContentLoaded', () => new GameViewer());
     </script>
 </body>
 </html>
