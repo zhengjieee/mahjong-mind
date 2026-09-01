@@ -1,14 +1,26 @@
 """FastAPI inference service for discard recommendations."""
 
+import asyncio
+import json
+import logging
+import threading
+import time
+import uuid
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
 import torch
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from kafka import KafkaConsumer  # type: ignore[import-untyped]
+from kafka.errors import KafkaError  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field
 
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
+from mahjong_mind.kafka_events.replayer import HistoricalReplayer, ReplayConfig
 from mahjong_mind.modelling.models.transformer_model import (
     DiscardTransformer,
     encode_transformer_row,
@@ -17,7 +29,12 @@ from mahjong_mind.modelling.shared.feature_normalisation import (
     FeatureStatistics,
     normalisation_tensors,
 )
-from mahjong_mind.modelling.shared.logits_decoding import logits_to_policy_prediction
+from mahjong_mind.modelling.shared.logits_decoding import (
+    logits_to_policy_prediction,
+    mask_illegal_logits,
+)
+
+logger = logging.getLogger(__name__)
 
 # Pydantic schemas for API requests/responses
 
@@ -82,6 +99,30 @@ class ActionProbability(BaseModel):
     probability: float
 
 
+class GameEventPublish(BaseModel):
+    """Request to publish a game event to WebSocket."""
+
+    game_id: str
+    event_index: int
+    event: dict[str, Any]
+    observation: dict[str, Any] | None = None
+    recommendations: dict[str, Any] | None = None
+
+
+class WatchRequest(BaseModel):
+    """Request to start replaying a recorded game."""
+
+    game_id: str
+    speed: float = Field(default=1.0, gt=0, le=20)
+    step_mode: bool = False
+
+
+class GameControl(BaseModel):
+    """Request naming the running replay to control."""
+
+    game_id: str
+
+
 class DiscarRecommendation(BaseModel):
     """Response from /recommend endpoint."""
 
@@ -104,6 +145,82 @@ class InferenceService:
 
 
 _service: InferenceService | None = None
+
+
+class GameEventBroadcaster:
+    """Routes game events to the WebSocket clients watching each game."""
+
+    # A game with no events for this long is no longer considered live.
+    LIVE_GAME_TIMEOUT_SECONDS = 120.0
+
+    def __init__(self) -> None:
+        """Initialize broadcaster."""
+        # Each connection maps to the game_id it watches, or None for all games.
+        self.connections: dict[WebSocket, str | None] = {}
+        # game_id -> {"event_count": int, "last_event": float, "last_type": str}
+        self.live_games: dict[str, dict[str, Any]] = {}
+
+    async def connect(self, websocket: WebSocket) -> None:
+        """Register a new WebSocket connection, initially watching all games."""
+        await websocket.accept()
+        self.connections[websocket] = None
+        logger.info(f"Client connected. Total connections: {len(self.connections)}")
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        """Unregister a WebSocket connection."""
+        self.connections.pop(websocket, None)
+        logger.info(f"Client disconnected. Total connections: {len(self.connections)}")
+
+    def subscribe(self, websocket: WebSocket, game_id: str | None) -> None:
+        """Point one connection at a single game, or at all games if None."""
+        if websocket in self.connections:
+            self.connections[websocket] = game_id
+            logger.info(f"Client now watching: {game_id or 'all games'}")
+
+    def record_activity(self, game_id: str, event_type: str) -> None:
+        """Note that a game produced an event, so it counts as live."""
+        entry = self.live_games.setdefault(game_id, {"event_count": 0})
+        entry["event_count"] += 1
+        entry["last_event"] = time.time()
+        entry["last_type"] = event_type
+
+    def active_games(self) -> list[dict[str, Any]]:
+        """List games that produced an event recently, newest activity first."""
+        now = time.time()
+        for game_id, entry in list(self.live_games.items()):
+            if now - entry["last_event"] > self.LIVE_GAME_TIMEOUT_SECONDS:
+                del self.live_games[game_id]
+
+        games = [
+            {
+                "game_id": game_id,
+                "event_count": entry["event_count"],
+                "last_type": entry["last_type"],
+                "seconds_ago": round(now - entry["last_event"], 1),
+            }
+            for game_id, entry in self.live_games.items()
+        ]
+        return sorted(games, key=lambda g: g["seconds_ago"])
+
+    async def broadcast(self, message: dict[str, Any]) -> None:
+        """Send an event to the clients watching that game."""
+        game_id = message.get("game_id")
+
+        disconnected = []
+        for connection, watching in list(self.connections.items()):
+            if watching is not None and watching != game_id:
+                continue
+            try:
+                await connection.send_json(message)
+            except (RuntimeError, OSError, ValueError) as e:
+                logger.warning(f"Error sending message to client: {e}")
+                disconnected.append(connection)
+
+        for connection in disconnected:
+            await self.disconnect(connection)
+
+
+_broadcaster = GameEventBroadcaster()
 
 
 def load_service(checkpoint_path: Path, model_version: str) -> InferenceService:
@@ -138,15 +255,67 @@ def load_service(checkpoint_path: Path, model_version: str) -> InferenceService:
 
 app = FastAPI(title="MahjongMind Inference Service")
 
+# Mount static files
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    """Load model at startup."""
+    """Load the model and start consuming enriched events."""
     global _service
     checkpoint_path = Path(__file__).parent.parent.parent.parent / "data" / "checkpoints" / "transformer_model" / "epoch-10.pt"
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     _service = load_service(checkpoint_path, model_version="transformer-epoch-10")
+    logger.info("Model loaded successfully")
+
+    _start_predictions_reader(asyncio.get_running_loop())
+
+
+TOPIC_PREDICTIONS = "riichi.predictions"
+
+
+def _start_predictions_reader(loop: asyncio.AbstractEventLoop) -> None:
+    """Read the predictions topic on a worker thread and broadcast each record.
+
+    The viewer is one consumer of that topic among others, so this holds its own
+    offset and never talks to the inference consumer directly.
+    """
+
+    def reader() -> None:
+        try:
+            consumer = KafkaConsumer(
+                TOPIC_PREDICTIONS,
+                bootstrap_servers=["localhost:9092"],
+                group_id=f"viewer-{uuid.uuid4().hex[:8]}",
+                auto_offset_reset="latest",
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            )
+        except (KafkaError, OSError) as e:
+            # The viewer still serves pages and /recommend without Kafka.
+            logger.warning(f"Live updates unavailable, could not reach Kafka: {e}")
+            return
+
+        logger.info(f"Reading {TOPIC_PREDICTIONS} for live updates")
+        for message in consumer:
+            record = message.value
+            _broadcaster.record_activity(
+                record.get("game_id", ""), str((record.get("event") or {}).get("type", ""))
+            )
+            asyncio.run_coroutine_threadsafe(_broadcaster.broadcast(record), loop)
+
+    threading.Thread(target=reader, daemon=True).start()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root() -> HTMLResponse:
+    """Serve the live viewer page."""
+    html_path = Path(__file__).parent / "static" / "index.html"
+    if not html_path.exists():
+        return HTMLResponse("<h1>Viewer not available</h1>", status_code=404)
+    return HTMLResponse(html_path.read_text())
 
 
 @app.get("/health")
@@ -184,7 +353,11 @@ async def recommend(request: PlayerObservationRequest) -> DiscarRecommendation:
         "own_last_draw": request.own_last_draw,
         "dora_markers": request.dora_markers,
         "legal_discard_mask": request.legal_discard_mask,
-        "label_index": 0,  # Placeholder; encoder requires it but won't use it for inference
+        # The encoder requires a legal label even though inference ignores it,
+        # so use the first legal action rather than a fixed index.
+        "label_index": next(
+            (i for i, legal in enumerate(request.legal_discard_mask) if legal), 0
+        ),
         "players": [
             {
                 "concealed_tile_count": p.concealed_tile_count,
@@ -217,22 +390,195 @@ async def recommend(request: PlayerObservationRequest) -> DiscarRecommendation:
     context = torch.tensor([encoded.context_features], dtype=torch.float32)
     padding_mask = torch.zeros(1, len(encoded.tile_tokens), dtype=torch.bool)
 
+    legal_mask = tuple(encoded.legal_discard_mask)
+
     with torch.no_grad():
         normalised_context = (context - _service.context_mean) / _service.context_std
         logits = _service.model(tokens, segments, flags, normalised_context, padding_mask)
+        # Illegal actions must be masked before softmax, or they can outrank
+        # the tiles the player actually holds.
+        masked = mask_illegal_logits(
+            logits[0], torch.tensor(legal_mask, dtype=torch.bool)
+        )
 
-    # Decode logits into a ranked prediction.
-    prediction = logits_to_policy_prediction(logits[0], tuple(encoded.legal_discard_mask))
+    # Decode logits into a ranked prediction. ranked_actions is already sorted
+    # by descending probability and contains only legal actions.
+    prediction = logits_to_policy_prediction(masked, legal_mask)
 
-    # Extract top-3 actions.
-    top_3 = sorted(
-        zip(DISCARD_TILE_TYPES, prediction.probabilities),
-        key=lambda x: x[1],
-        reverse=True,
-    )[:3]
+    top_3 = [
+        ActionProbability(
+            tile=DISCARD_TILE_TYPES[action],
+            probability=float(prediction.probabilities[action]),
+        )
+        for action in prediction.ranked_actions[:3]
+    ]
 
     return DiscarRecommendation(
         model_version=_service.model_version,
-        top_3_actions=[ActionProbability(tile=tile, probability=float(prob)) for tile, prob in top_3],
+        top_3_actions=top_3,
         inference_ms=0.0,  # TODO: measure actual latency in Day 5-7
     )
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    """WebSocket endpoint for live game updates.
+
+    Clients choose what to watch by sending {"action": "subscribe",
+    "game_id": "..."}; a null game_id means every game.
+    """
+    await _broadcaster.connect(websocket)
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                command = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(command, dict) and command.get("action") == "subscribe":
+                _broadcaster.subscribe(websocket, command.get("game_id"))
+    except WebSocketDisconnect:
+        await _broadcaster.disconnect(websocket)
+
+
+@app.post("/api/publish-event")
+async def publish_event(request: GameEventPublish) -> dict[str, str]:
+    """Publish a game event to WebSocket subscribers."""
+    message = {
+        "game_id": request.game_id,
+        "event_index": request.event_index,
+        "event": request.event,
+        "observation": request.observation,
+        "recommendations": request.recommendations,
+    }
+    _broadcaster.record_activity(request.game_id, str(request.event.get("type", "")))
+    await _broadcaster.broadcast(message)
+    return {"status": "published"}
+
+
+DATA_DIRECTORY = Path(__file__).parent.parent.parent.parent / "data" / "raw"
+
+
+def _available_years() -> list[str]:
+    """Year directories present under data/raw."""
+    if not DATA_DIRECTORY.exists():
+        return []
+    return sorted(p.name for p in DATA_DIRECTORY.iterdir() if p.is_dir() and p.name.isdigit())
+
+
+def _recorded_games(year: str, limit: int) -> list[str]:
+    """Up to `limit` recorded game ids for one year.
+
+    Deliberately lazy: some year directories hold ~170,000 files, so this
+    never materialises or sorts the full listing.
+    """
+    year_dir = DATA_DIRECTORY / year
+    if not year_dir.is_dir():
+        return []
+    return sorted(path.stem for path in islice(year_dir.glob("*.mjson"), limit))
+
+
+@app.get("/api/games")
+async def list_games(year: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """List games currently streaming, plus recorded games available to replay."""
+    years = _available_years()
+    selected = year if year in years else (years[0] if years else None)
+
+    return {
+        "live": _broadcaster.active_games(),
+        "years": years,
+        "selected_year": selected,
+        "recorded": _recorded_games(selected, min(limit, 200)) if selected else [],
+        "replaying": sorted(_active_replays),
+    }
+
+
+# Replays this service is currently running, so they can be controlled.
+_active_replays: dict[str, HistoricalReplayer] = {}
+
+
+def _replay_worker(
+    game_id: str, game_path: Path, replayer: HistoricalReplayer, config: ReplayConfig
+) -> None:
+    """Replay one game into Kafka. Runs on a worker thread."""
+    try:
+        replayer.connect()
+        replayer.replay_game(game_path, config)
+        logger.info(f"Replay of {game_id} ended after {replayer.events_sent} events")
+    except (KafkaError, RuntimeError, ValueError, OSError) as e:
+        logger.error(f"Replay of {game_id} failed: {e}")
+    finally:
+        replayer.disconnect()
+        _active_replays.pop(game_id, None)
+
+
+def _running_replay(game_id: str) -> HistoricalReplayer:
+    """Look up a running replay, or 404."""
+    replayer = _active_replays.get(game_id)
+    if replayer is None:
+        raise HTTPException(status_code=404, detail=f"No replay running for {game_id}")
+    return replayer
+
+
+@app.post("/api/watch")
+async def watch_game(request: WatchRequest) -> dict[str, Any]:
+    """Start replaying a recorded game so subscribers can watch it."""
+    game_id = request.game_id
+
+    if game_id in _active_replays:
+        return {"status": "already_replaying", "game_id": game_id}
+
+    # Game files live under data/raw/<year>/, and the year prefixes the id.
+    year = game_id[:4]
+    game_path = DATA_DIRECTORY / year / f"{game_id}.mjson"
+    if not game_path.exists():
+        raise HTTPException(status_code=404, detail=f"Game not found: {game_id}")
+
+    replayer = HistoricalReplayer()
+    config = ReplayConfig(
+        game_id=game_id, replay_speed=request.speed, step_mode=request.step_mode
+    )
+    _active_replays[game_id] = replayer
+    threading.Thread(
+        target=_replay_worker,
+        args=(game_id, game_path, replayer, config),
+        daemon=True,
+    ).start()
+
+    mode = "step mode" if request.step_mode else f"{request.speed}x"
+    logger.info(f"Started replay of {game_id} in {mode}")
+    return {"status": "started", "game_id": game_id, "step_mode": request.step_mode}
+
+
+@app.post("/api/step")
+async def step_game(request: GameControl) -> dict[str, Any]:
+    """Release the next event of a step-mode replay."""
+    _running_replay(request.game_id).advance()
+    return {"status": "stepped", "game_id": request.game_id}
+
+
+@app.post("/api/pause")
+async def pause_game(request: GameControl) -> dict[str, Any]:
+    """Pause a timed replay."""
+    _running_replay(request.game_id).pause()
+    return {"status": "paused", "game_id": request.game_id}
+
+
+@app.post("/api/resume")
+async def resume_game(request: GameControl) -> dict[str, Any]:
+    """Resume a paused replay."""
+    _running_replay(request.game_id).resume()
+    return {"status": "resumed", "game_id": request.game_id}
+
+
+@app.post("/api/stop")
+async def stop_game(request: GameControl) -> dict[str, Any]:
+    """Stop a replay and free its worker thread."""
+    _running_replay(request.game_id).stop()
+    return {"status": "stopped", "game_id": request.game_id}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)

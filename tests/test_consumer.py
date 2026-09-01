@@ -43,6 +43,9 @@ def test_consumer_processes_tsumo_and_calls_api() -> None:
     mock_http_client.post.return_value = mock_response
     consumer.http_client = mock_http_client
 
+    mock_producer = MagicMock()
+    consumer.producer = mock_producer
+
     # Create a game with start_game, start_kyoku, tsumo events
     game_id = "test-game-002"
 
@@ -90,14 +93,23 @@ def test_consumer_processes_tsumo_and_calls_api() -> None:
     }
     consumer.process_event(tsumo_event)
 
-    # Verify that /recommend was called
-    mock_http_client.post.assert_called_once()
-    call_args = mock_http_client.post.call_args
-    assert call_args[0][0] == "/recommend"
+    # /recommend is called once, on the tsumo
+    posted_paths = [call[0][0] for call in mock_http_client.post.call_args_list]
+    assert posted_paths.count("/recommend") == 1
 
     # Verify that prediction was cached
     assert game_id in consumer.pending_predictions
     assert consumer.pending_predictions[game_id].predicted_tiles == ["1m", "2m", "3m"]
+
+    # The enriched tsumo is published to the predictions topic, not back to the API
+    published = [
+        call for call in mock_producer.send.call_args_list
+        if call[0][0] == GameStateConsumer.TOPIC_PREDICTIONS
+    ]
+    tsumo_payload = published[-1][1]["value"]
+    assert tsumo_payload["event"]["type"] == "tsumo"
+    assert tsumo_payload["observation"]["own_last_draw"] == "1m"
+    assert tsumo_payload["recommendations"]["top_3_actions"][0]["tile"] == "1m"
 
 
 def test_consumer_logs_dahai_vs_prediction() -> None:
@@ -156,71 +168,40 @@ def test_consumer_seat_wind_calculation() -> None:
     assert GameStateConsumer._seat_wind(0, 1) == "N"
 
 
-def test_consumer_checkpoint_save_and_load(tmp_path: str) -> None:
-    """Test checkpoint saving and loading."""
-    import tempfile
-    from pathlib import Path
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        consumer = GameStateConsumer(
-            api_base_url="http://localhost:8000",
-            checkpoint_dir=Path(tmpdir),
-        )
-
-        game_id = "test-game-001"
-
-        # Save checkpoint
-        consumer._update_checkpoint(game_id, 42)
-        consumer._save_checkpoints()
-
-        # Load checkpoint
-        loaded = consumer._load_checkpoint(game_id)
-        assert loaded == 42
-
-
-def test_consumer_sends_to_dlq_on_error(tmp_path: str) -> None:
-    """Test that failed events are sent to DLQ."""
+def test_consumer_sends_to_dlq_on_error() -> None:
+    """A failed event goes to the dead-letter topic."""
     consumer = GameStateConsumer(api_base_url="http://localhost:8000")
+    mock_producer = MagicMock()
+    consumer.producer = mock_producer
 
-    # Mock DLQ producer
-    mock_dlq_producer = MagicMock()
-    consumer.dlq_producer = mock_dlq_producer
+    consumer._send_to_dlq("test-game-001", 5, {"type": "invalid"}, "Test error")
 
-    # Send to DLQ
-    game_id = "test-game-001"
-    consumer._send_to_dlq(game_id, 5, {"type": "invalid"}, "Test error")
-
-    # Verify DLQ producer was called
-    assert mock_dlq_producer.send.called
-    call_args = mock_dlq_producer.send.call_args
+    assert mock_producer.send.called
+    call_args = mock_producer.send.call_args
     assert call_args[0][0] == consumer.TOPIC_DLQ
-    assert call_args[1]["key"] == game_id.encode("utf-8")
+    assert call_args[1]["key"] == b"test-game-001"
     assert call_args[1]["value"]["error"] == "Test error"
 
 
-def test_consumer_skips_events_before_checkpoint(tmp_path: str) -> None:
-    """Test that consumer skips events before checkpoint on recovery."""
-    import tempfile
-    from pathlib import Path
+def test_dahai_outcome_rides_the_predictions_topic() -> None:
+    """The resolved prediction is attached so other consumers can score it."""
+    from mahjong_mind.kafka_events.consumer import PredictionResult
+    from mahjong_mind.mjai.events import DahaiEvent
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        consumer = GameStateConsumer(
-            api_base_url="http://localhost:8000",
-            checkpoint_dir=Path(tmpdir),
-        )
+    consumer = GameStateConsumer(api_base_url="http://localhost:8000")
+    consumer.pending_predictions["g"] = PredictionResult(
+        game_id="g",
+        event_index=2,
+        actor=0,
+        predicted_tiles=["9p", "1m", "3s"],
+        predicted_probabilities=[0.5, 0.3, 0.2],
+    )
 
-        game_id = "test-game-001"
+    event = DahaiEvent(type="dahai", actor=0, pai="1m", tsumogiri=False)
+    outcome = consumer._handle_dahai("g", 3, event)
 
-        # Set checkpoint to 10
-        consumer._update_checkpoint(game_id, 10)
-        consumer._save_checkpoints()
-
-        # Create a new consumer instance to simulate restart
-        consumer2 = GameStateConsumer(
-            api_base_url="http://localhost:8000",
-            checkpoint_dir=Path(tmpdir),
-        )
-
-        # Load checkpoint
-        checkpoint = consumer2._load_checkpoint(game_id)
-        assert checkpoint == 10
+    assert outcome is not None
+    assert outcome["actual_tile"] == "1m"
+    assert outcome["rank"] == 2
+    assert outcome["top_1"] is False
+    assert outcome["top_3"] is True

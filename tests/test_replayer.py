@@ -93,3 +93,46 @@ def test_replayer_list_games(tmp_path: Path) -> None:
     assert len(games) == 3
     game_ids = [g[0] for g in games]
     assert sorted(game_ids) == ["game1", "game2", "game3"]
+
+
+def test_step_mode_waits_for_advance(tmp_path: Path) -> None:
+    """In step mode the replay publishes one event per advance() call."""
+    import gzip
+    import threading
+    import time
+
+    game_file = tmp_path / "stepper.mjson"
+    events = [
+        '{"type":"start_game","names":["A","B","C","D"],"kyoku_first":0,"aka_flag":false}',
+        '{"type":"start_kyoku","bakaze":"E","dora_marker":"1m","kyoku":1,"honba":0,"kyotaku":0,"oya":0,"scores":[25000,25000,25000,25000],"tehais":[["1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","1s","E","S"],["1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","1s","E","S"],["1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","1s","E","S"],["1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","1s","E","S"]]}',
+        '{"type":"tsumo","actor":0,"pai":"1m"}',
+    ]
+    with gzip.open(game_file, "wt") as handle:
+        for event in events:
+            handle.write(event + "\n")
+
+    replayer = HistoricalReplayer()
+    replayer.producer = MagicMock()
+    config = ReplayConfig(game_id="stepper", step_mode=True)
+
+    worker = threading.Thread(
+        target=replayer.replay_game, args=(game_file, config), daemon=True
+    )
+    worker.start()
+
+    # Nothing is published until the first advance().
+    time.sleep(0.2)
+    assert replayer.producer.send.call_count == 0
+
+    replayer.advance()
+    time.sleep(0.2)
+    assert replayer.producer.send.call_count == 1
+
+    replayer.advance()
+    time.sleep(0.2)
+    assert replayer.producer.send.call_count == 2
+
+    # stop() must release a step-mode wait so the worker can exit.
+    replayer.stop()
+    worker.join(timeout=2)
+    assert not worker.is_alive()

@@ -1,6 +1,7 @@
 """Historical game log replayer for Kafka event streaming."""
 
 import json
+import threading
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -18,6 +19,9 @@ class ReplayConfig:
     game_id: str
     replay_speed: float = 1.0  # 1.0 = real-time, 2.0 = 2x speed, 0.5 = half speed
     start_event_index: int = 0
+    # In step mode the replay publishes one event per advance() call instead
+    # of running on a timer.
+    step_mode: bool = False
 
 
 class HistoricalReplayer:
@@ -32,6 +36,10 @@ class HistoricalReplayer:
         self.kafka_brokers = kafka_brokers
         self.producer: KafkaProducer | None = None
         self._paused = False
+        self._stopped = False
+        # Set by advance() to release one event in step mode.
+        self._step = threading.Event()
+        self.events_sent = 0
 
     def connect(self) -> None:
         """Connect to Kafka."""
@@ -58,12 +66,24 @@ class HistoricalReplayer:
 
         event_count = 0
         for parsed in iter_mjai_events(game_path):
+            if self._stopped:
+                break
+
             if parsed.event_index < config.start_event_index:
                 continue
 
-            # Pause support: simple blocking loop
-            while self._paused:
-                time.sleep(0.1)
+            if config.step_mode:
+                # Block until advance() releases the next event.
+                self._step.wait()
+                self._step.clear()
+                if self._stopped:
+                    break
+            else:
+                # Pause support: simple blocking loop
+                while self._paused and not self._stopped:
+                    time.sleep(0.1)
+                if self._stopped:
+                    break
 
             # Publish event to Kafka with game_id as key
             self.producer.send(
@@ -76,9 +96,10 @@ class HistoricalReplayer:
                 },
             )
             event_count += 1
+            self.events_sent = event_count
 
-            # Apply replay speed delay
-            if config.replay_speed > 0:
+            # Apply replay speed delay (step mode waits on advance() instead)
+            if not config.step_mode and config.replay_speed > 0:
                 # Assume ~0.5s per event at 1x speed (typical decision cadence)
                 delay = 0.5 / config.replay_speed
                 time.sleep(delay)
@@ -92,6 +113,16 @@ class HistoricalReplayer:
     def resume(self) -> None:
         """Resume replay."""
         self._paused = False
+
+    def advance(self) -> None:
+        """Release one event in step mode."""
+        self._step.set()
+
+    def stop(self) -> None:
+        """Stop the replay; a step-mode wait is released so it can exit."""
+        self._stopped = True
+        self._paused = False
+        self._step.set()
 
     def list_games(self, data_directory: Path, year: int | None = None) -> Generator[tuple[str, Path], None, None]:
         """Iterate over available game files, optionally filtered by year."""

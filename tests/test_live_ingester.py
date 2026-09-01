@@ -1,6 +1,8 @@
 """Tests for live event ingester."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from mahjong_mind.kafka_events.live_ingester import LiveEventIngester, LiveGameConfig
 
@@ -17,7 +19,9 @@ def test_live_ingester_initializes() -> None:
 def test_live_ingester_connects() -> None:
     """Test Kafka producer connection."""
     ingester = LiveEventIngester()
-    ingester.connect()
+    with patch("mahjong_mind.kafka_events.live_ingester.KafkaProducer") as producer:
+        ingester.connect()
+        assert producer.called
 
     assert ingester.producer is not None
     ingester.disconnect()
@@ -61,15 +65,10 @@ def test_live_ingester_raises_without_producer() -> None:
 
 def test_live_ingester_requires_room_id() -> None:
     """Test that ingestion requires room_id."""
-    ingester = LiveEventIngester()
-    ingester.connect()
-
     import asyncio
 
-    config = LiveGameConfig(room_id=None)
-    try:
-        asyncio.run(ingester._ingest_loop(config))
-    except ValueError as e:
-        assert "room_id is required" in str(e)
-    finally:
-        ingester.disconnect()
+    ingester = LiveEventIngester()
+    ingester.producer = MagicMock()
+
+    with pytest.raises(ValueError, match="room_id is required"):
+        asyncio.run(ingester._ingest_loop(LiveGameConfig(room_id=None)))

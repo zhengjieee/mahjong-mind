@@ -78,3 +78,54 @@ def test_recommend_endpoint_basic(client):
         assert "tile" in action
         assert "probability" in action
         assert 0 <= action["probability"] <= 1
+
+
+def test_recommend_with_no_1m_in_hand(client):
+    """A hand without 1m must still get a recommendation.
+
+    The encoder rejects a label_index that is not a legal action, so a fixed
+    placeholder of 0 (tile "1m") made every such hand fail with a 500.
+    """
+    from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
+
+    own_hand = ["2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p", "2s", "3s", "4s", "W", "N"]
+    legal_mask = [tile in own_hand for tile in DISCARD_TILE_TYPES]
+    assert not legal_mask[0], "index 0 must be illegal for this test to be meaningful"
+
+    observation = {
+        "match_id": "test-match-002",
+        "observer": 0,
+        "names": ["Player0", "Player1", "Player2", "Player3"],
+        "aka_flag": True,
+        "hand_index": 0,
+        "bakaze": "E",
+        "kyoku": 1,
+        "honba": 0,
+        "kyotaku": 0,
+        "dealer": 0,
+        "scores": [25000, 25000, 25000, 25000],
+        "dora_markers": ["5m"],
+        "draws_remaining": 60,
+        "hand_ended": False,
+        "own_hand": own_hand,
+        "own_last_draw": "N",
+        "actor_turn_index": 3,
+        "seat_wind": "E",
+        "legal_discard_mask": legal_mask,
+        "players": [
+            {
+                "concealed_tile_count": 13,
+                "discards": [],
+                "melds": [],
+                "riichi": "none",
+            }
+            for _ in range(4)
+        ],
+    }
+
+    response = client.post("/recommend", json=observation)
+    assert response.status_code == 200
+
+    # Every recommended tile must be one the player can legally discard.
+    for action in response.json()["top_3_actions"]:
+        assert action["tile"] in own_hand

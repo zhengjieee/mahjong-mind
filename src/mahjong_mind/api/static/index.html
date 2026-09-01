@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MahjongMind Live Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 20px;
+            max-width: 1400px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 15px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-dot.connected {
+            background-color: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.disconnected {
+            background-color: #ef4444;
+        }
+
+        .status-dot.waiting {
+            background-color: #f59e0b;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .game-board {
+            display: grid;
+            grid-template-columns: 1fr 2fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .board-section {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .board-section h2 {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .river-section {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .player-river {
+            margin-bottom: 20px;
+        }
+
+        .player-river h3 {
+            font-size: 13px;
+            color: #999;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .discard-row {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 6px;
+            min-height: 60px;
+        }
+
+        .tile {
+            aspect-ratio: 1;
+            background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: default;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .tile:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .tile.highlight {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            border-color: #d97706;
+            color: white;
+            font-weight: bold;
+        }
+
+        .tile.riichi {
+            border-width: 3px;
+            border-color: #ef4444;
+        }
+
+        .tile.red {
+            color: #dc2626;
+        }
+
+        .hand-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .hand-tiles {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .hand-tile {
+            aspect-ratio: 1.2;
+            background: linear-gradient(135deg, #e0e7ff 0%, #cffafe 100%);
+            border: 2px solid #818cf8;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            position: relative;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-size: 18px;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .predictions-section {
+            background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .predictions-section h3 {
+            font-size: 14px;
+            color: #92400e;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .prediction-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .prediction-tile {
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+            min-width: 30px;
+        }
+
+        .prediction-bar {
+            flex: 1;
+            height: 20px;
+            background: #e5e7eb;
+            border-radius: 10px;
+            margin: 0 12px;
+            overflow: hidden;
+        }
+
+        .prediction-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+
+        .prediction-percent {
+            font-size: 13px;
+            color: #666;
+            min-width: 50px;
+            text-align: right;
+            font-weight: 600;
+        }
+
+        .opponents-section {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .opponent {
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            border-top: 3px solid #667eea;
+        }
+
+        .opponent-name {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .opponent-stat {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .opponent-stat-label {
+            color: #999;
+        }
+
+        .opponent-stat-value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .picker {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .picker-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+
+        .picker h2 {
+            font-size: 16px;
+            color: #666;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .controls select {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+            cursor: pointer;
+        }
+
+        .transport {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 0 16px;
+            border-top: 1px solid #eee;
+            margin-bottom: 4px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 9px 18px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: white;
+            font-size: 14px;
+            font-weight: 600;
+            color: #444;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn:hover:not(:disabled) { background: #f3f4f6; }
+
+        .btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            border-color: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) { background: #5a67d8; }
+
+        .btn-danger {
+            background: white;
+            border-color: #fca5a5;
+            color: #b91c1c;
+        }
+
+        .btn-danger:hover:not(:disabled) { background: #fef2f2; }
+
+        .transport-note {
+            font-size: 13px;
+            color: #999;
+        }
+
+        .picker-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .picker-columns h3 {
+            font-size: 13px;
+            color: #999;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .game-list {
+            max-height: 210px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 6px;
+            background: white;
+        }
+
+        .game-item {
+            padding: 9px 12px;
+            font-size: 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            border-bottom: 1px solid #f3f4f6;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.15s;
+        }
+
+        .game-item:last-child { border-bottom: none; }
+        .game-item:hover { background: #eef2ff; }
+
+        .game-item.active {
+            background: #e0e7ff;
+            border-left: 3px solid #667eea;
+            font-weight: 600;
+        }
+
+        .game-badge {
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 10px;
+            background: #d1fae5;
+            color: #065f46;
+            font-family: inherit;
+            white-space: nowrap;
+        }
+
+        .game-badge.replaying {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .list-empty {
+            padding: 20px;
+            text-align: center;
+            color: #bbb;
+            font-size: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .empty-state p {
+            font-size: 16px;
+        }
+
+        @media (max-width: 1200px) {
+            .game-board {
+                grid-template-columns: 1fr;
+            }
+
+            .info-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 20px;
+            }
+
+            .hand-tiles {
+                grid-template-columns: repeat(3, 1fr);
+            }
+
+            .opponents-section {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🀄 MahjongMind Live Viewer</h1>
+            <div class="status-bar">
+                <div class="status-indicator">
+                    <span class="status-dot" id="connectionStatus"></span>
+                    <span id="connectionText">Connecting...</span>
+                </div>
+                <div class="status-indicator">
+                    <span id="gameStatusText">Waiting for game...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="picker">
+            <div class="picker-head">
+                <h2>Choose a game</h2>
+                <div class="controls">
+                    <label for="yearSelect">Year</label>
+                    <select id="yearSelect"></select>
+                    <label for="modeSelect">Mode</label>
+                    <select id="modeSelect">
+                        <option value="step" selected>Step — click Next</option>
+                        <option value="auto">Auto — timed</option>
+                    </select>
+                    <label for="speedSelect" id="speedLabel" style="display:none">Speed</label>
+                    <select id="speedSelect" style="display:none">
+                        <option value="0.5">0.5x — slow</option>
+                        <option value="1" selected>1x — normal</option>
+                        <option value="2">2x</option>
+                        <option value="4">4x</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="transport" id="transport" style="display:none">
+                <button class="btn btn-primary" id="nextBtn">Next event ▶</button>
+                <button class="btn" id="pauseBtn" style="display:none">Pause</button>
+                <button class="btn btn-danger" id="stopBtn">Stop</button>
+                <span class="transport-note" id="transportNote"></span>
+            </div>
+            <div class="picker-columns">
+                <div>
+                    <h3>Streaming now</h3>
+                    <div class="game-list" id="liveList">
+                        <div class="list-empty">No games streaming</div>
+                    </div>
+                </div>
+                <div>
+                    <h3>Recorded — click to start</h3>
+                    <div class="game-list" id="recordedList">
+                        <div class="list-empty">Loading…</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="gameContent" style="display: none;">
+            <div class="game-board">
+                <!-- Left: Discard Rivers -->
+                <div class="board-section river-section">
+                    <h2>Discard Rivers</h2>
+                    <div class="player-river">
+                        <h3>Player 0 (You)</h3>
+                        <div class="discard-row" id="river-0"></div>
+                    </div>
+                    <div class="player-river">
+                        <h3>Player 1</h3>
+                        <div class="discard-row" id="river-1"></div>
+                    </div>
+                    <div class="player-river">
+                        <h3>Player 2</h3>
+                        <div class="discard-row" id="river-2"></div>
+                    </div>
+                    <div class="player-river">
+                        <h3>Player 3</h3>
+                        <div class="discard-row" id="river-3"></div>
+                    </div>
+                </div>
+
+                <!-- Center: Hand and Info -->
+                <div class="board-section">
+                    <h2>Your Hand</h2>
+                    <div class="hand-tiles" id="handTiles"></div>
+
+                    <h2 style="margin-top: 20px;">Game Info</h2>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">Wind</div>
+                            <div class="info-value" id="windInfo">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Round</div>
+                            <div class="info-value" id="roundInfo">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Dora</div>
+                            <div class="info-value" id="doraInfo">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Draws</div>
+                            <div class="info-value" id="drawsInfo">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Honba</div>
+                            <div class="info-value" id="honbaInfo">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Kyotaku</div>
+                            <div class="info-value" id="kyotakuInfo">-</div>
+                        </div>
+                    </div>
+
+                    <h2 style="margin-top: 20px;">Model Predictions</h2>
+                    <div class="predictions-section">
+                        <h3>Top 3 Recommended Discards</h3>
+                        <div id="predictions"></div>
+                    </div>
+                </div>
+
+                <!-- Right: Scores and Opponents -->
+                <div class="board-section">
+                    <h2>Scores</h2>
+                    <div class="info-grid" style="grid-template-columns: 1fr;">
+                        <div class="info-item" id="score-0"></div>
+                        <div class="info-item" id="score-1"></div>
+                        <div class="info-item" id="score-2"></div>
+                        <div class="info-item" id="score-3"></div>
+                    </div>
+
+                    <h2 style="margin-top: 20px;">Opponents</h2>
+                    <div class="opponents-section">
+                        <div class="opponent" id="opponent-1"></div>
+                        <div class="opponent" id="opponent-2"></div>
+                        <div class="opponent" id="opponent-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="emptyState" class="empty-state">
+            <div class="empty-state-icon">🎮</div>
+            <p>Waiting for game events...</p>
+            <p style="font-size: 13px; color: #ccc; margin-top: 10px;">Make sure the game is streaming events to Kafka</p>
+        </div>
+    </div>
+
+    <script>
+        class GameViewer {
+            constructor() {
+                this.ws = null;
+                this.gameState = null;
+                this.predictions = null;
+                this.lastDiscardIndex = -1;
+
+                this.tileNames = {
+                    m: '筒', p: '索', s: '万',
+                    E: '東', S: '南', W: '西', N: '北',
+                    Z: '中', F: '發', B: '白'
+                };
+
+                this.watching = null;
+                this.years = [];
+
+                this.connect();
+                this.initPicker();
+            }
+
+            // --- Game selection -------------------------------------------------
+
+            initPicker() {
+                document.getElementById('yearSelect').addEventListener('change', (e) => {
+                    this.refreshGames(e.target.value);
+                });
+
+                // Speed only applies to timed playback.
+                const modeSelect = document.getElementById('modeSelect');
+                modeSelect.addEventListener('change', () => {
+                    const auto = modeSelect.value === 'auto';
+                    document.getElementById('speedSelect').style.display = auto ? '' : 'none';
+                    document.getElementById('speedLabel').style.display = auto ? '' : 'none';
+                });
+
+                document.getElementById('nextBtn').addEventListener('click', () => this.step());
+                document.getElementById('stopBtn').addEventListener('click', () => this.stop());
+                document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+
+                this.refreshGames();
+                // Keep the "streaming now" column current.
+                setInterval(() => this.refreshLiveOnly(), 4000);
+            }
+
+            // --- Transport ------------------------------------------------------
+
+            showTransport(stepMode) {
+                this.stepMode = stepMode;
+                this.paused = false;
+                document.getElementById('transport').style.display = '';
+                document.getElementById('nextBtn').style.display = stepMode ? '' : 'none';
+                document.getElementById('pauseBtn').style.display = stepMode ? 'none' : '';
+                document.getElementById('pauseBtn').textContent = 'Pause';
+                document.getElementById('transportNote').textContent = stepMode
+                    ? 'Each click sends one event through the model.'
+                    : '';
+            }
+
+            hideTransport() {
+                document.getElementById('transport').style.display = 'none';
+            }
+
+            async control(path) {
+                if (!this.watching) return null;
+                try {
+                    const res = await fetch(path, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ game_id: this.watching }),
+                    });
+                    return res.ok ? res : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            async step() {
+                const btn = document.getElementById('nextBtn');
+                btn.disabled = true;
+                const res = await this.control('/api/step');
+                if (!res) {
+                    document.getElementById('transportNote').textContent =
+                        'This game is no longer running.';
+                    this.hideTransport();
+                    return;
+                }
+                // Re-enable shortly; the event needs a round trip through the model.
+                setTimeout(() => { btn.disabled = false; }, 250);
+            }
+
+            async togglePause() {
+                const btn = document.getElementById('pauseBtn');
+                const res = await this.control(this.paused ? '/api/resume' : '/api/pause');
+                if (!res) return;
+                this.paused = !this.paused;
+                btn.textContent = this.paused ? 'Resume' : 'Pause';
+            }
+
+            async stop() {
+                await this.control('/api/stop');
+                document.getElementById('gameStatusText').textContent = 'Stopped';
+                this.hideTransport();
+                this.refreshGames(document.getElementById('yearSelect').value);
+            }
+
+            async refreshGames(year) {
+                try {
+                    const url = year ? `/api/games?year=${encodeURIComponent(year)}` : '/api/games';
+                    const data = await (await fetch(url)).json();
+
+                    if (this.years.length === 0 && data.years.length) {
+                        this.years = data.years;
+                        const sel = document.getElementById('yearSelect');
+                        sel.innerHTML = data.years
+                            .map((y) => `<option value="${y}">${y}</option>`)
+                            .join('');
+                        sel.value = data.selected_year;
+                    }
+
+                    this.renderRecorded(data.recorded, data.replaying);
+                    this.renderLive(data.live);
+                } catch (e) {
+                    console.error('Could not load games:', e);
+                }
+            }
+
+            async refreshLiveOnly() {
+                try {
+                    const data = await (await fetch('/api/games?limit=0')).json();
+                    this.renderLive(data.live);
+                } catch (e) {
+                    /* transient; the next tick will retry */
+                }
+            }
+
+            renderLive(live) {
+                const el = document.getElementById('liveList');
+                if (!live || live.length === 0) {
+                    el.innerHTML = '<div class="list-empty">No games streaming</div>';
+                    return;
+                }
+                el.innerHTML = live
+                    .map((g) => `
+                        <div class="game-item ${g.game_id === this.watching ? 'active' : ''}"
+                             data-game="${g.game_id}">
+                            <span>${g.game_id}</span>
+                            <span class="game-badge">${g.event_count} events</span>
+                        </div>`)
+                    .join('');
+                el.querySelectorAll('.game-item').forEach((item) => {
+                    item.addEventListener('click', () => this.joinLive(item.dataset.game));
+                });
+            }
+
+            /** Watch a game already in flight. We may not control this one. */
+            joinLive(gameId) {
+                if (gameId === this.watching) return;
+                this.watch(gameId);
+                this.hideTransport();
+                document.getElementById('gameStatusText').textContent =
+                    `Watching ${gameId}`;
+            }
+
+            renderRecorded(recorded, replaying) {
+                const el = document.getElementById('recordedList');
+                if (!recorded || recorded.length === 0) {
+                    el.innerHTML = '<div class="list-empty">No recorded games found</div>';
+                    return;
+                }
+                const busy = new Set(replaying || []);
+                el.innerHTML = recorded
+                    .map((id) => `
+                        <div class="game-item ${id === this.watching ? 'active' : ''}"
+                             data-game="${id}">
+                            <span>${id}</span>
+                            ${busy.has(id) ? '<span class="game-badge replaying">playing</span>' : ''}
+                        </div>`)
+                    .join('');
+                el.querySelectorAll('.game-item').forEach((item) => {
+                    item.addEventListener('click', () => this.startReplay(item.dataset.game));
+                });
+            }
+
+            async startReplay(gameId) {
+                const speed = parseFloat(document.getElementById('speedSelect').value);
+                const stepMode = document.getElementById('modeSelect').value === 'step';
+                this.watch(gameId);
+                document.getElementById('gameStatusText').textContent = 'Starting…';
+                try {
+                    const res = await fetch('/api/watch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ game_id: gameId, speed, step_mode: stepMode }),
+                    });
+                    if (!res.ok) {
+                        document.getElementById('gameStatusText').textContent =
+                            'Could not start that game';
+                        return;
+                    }
+                    this.showTransport(stepMode);
+                    document.getElementById('gameStatusText').textContent = stepMode
+                        ? 'Ready — click Next to play the first event'
+                        : `Playing at ${speed}x…`;
+                } catch (e) {
+                    document.getElementById('gameStatusText').textContent = 'Could not reach server';
+                }
+            }
+
+            /** Watch one game: the server sends us only its events. */
+            watch(gameId) {
+                this.watching = gameId;
+                this.gameState = null;
+                this.predictions = null;
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ action: 'subscribe', game_id: gameId }));
+                }
+                document.querySelectorAll('.game-item').forEach((item) => {
+                    item.classList.toggle('active', item.dataset.game === gameId);
+                });
+            }
+
+            connect() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const url = `${protocol}//${window.location.host}/ws`;
+
+                this.ws = new WebSocket(url);
+                this.ws.onopen = () => this.onConnected();
+                this.ws.onmessage = (event) => this.onMessage(event);
+                this.ws.onerror = () => this.onError();
+                this.ws.onclose = () => this.onDisconnected();
+            }
+
+            onConnected() {
+                this.updateConnectionStatus('connected', 'Connected');
+                console.log('WebSocket connected');
+                // Restore our subscription after a reconnect.
+                if (this.watching) {
+                    this.ws.send(JSON.stringify({ action: 'subscribe', game_id: this.watching }));
+                }
+            }
+
+            onDisconnected() {
+                this.updateConnectionStatus('disconnected', 'Disconnected');
+                console.log('WebSocket disconnected');
+                setTimeout(() => this.connect(), 3000);
+            }
+
+            onError() {
+                this.updateConnectionStatus('disconnected', 'Connection Error');
+                console.error('WebSocket error');
+            }
+
+            onMessage(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    if (message.event) {
+                        this.handleGameEvent(message);
+                    }
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            }
+
+            handleGameEvent(message) {
+                const gameId = message.game_id;
+                const eventIndex = message.event_index;
+                const event = message.event;
+                const observation = message.observation;
+                const recommendations = message.recommendations;
+
+                // Update game state
+                if (observation) {
+                    this.gameState = observation;
+                    this.render();
+                }
+
+                // Update predictions
+                if (recommendations) {
+                    this.predictions = recommendations;
+                    this.renderPredictions();
+                }
+
+                // Track if this was a discard (for highlighting)
+                if (event.type === 'dahai') {
+                    this.lastDiscardIndex = eventIndex;
+                }
+
+                const hand = observation ? ` — hand ${observation.hand_index + 1}` : '';
+                document.getElementById('gameStatusText').textContent =
+                    `${gameId}${hand} · event ${eventIndex}`;
+                document.getElementById('gameContent').style.display = '';
+                document.getElementById('emptyState').style.display = 'none';
+            }
+
+            updateConnectionStatus(status, text) {
+                const dot = document.getElementById('connectionStatus');
+                dot.className = `status-dot ${status}`;
+                document.getElementById('connectionText').textContent = text;
+            }
+
+            render() {
+                if (!this.gameState) return;
+
+                this.renderRivers();
+                this.renderHand();
+                this.renderInfo();
+                this.renderScores();
+                this.renderOpponents();
+            }
+
+            renderRivers() {
+                if (!this.gameState.players) return;
+
+                for (let playerIdx = 0; playerIdx < 4; playerIdx++) {
+                    const player = this.gameState.players[playerIdx];
+                    const riverEl = document.getElementById(`river-${playerIdx}`);
+                    riverEl.innerHTML = '';
+
+                    if (player.discards) {
+                        player.discards.forEach((discard, idx) => {
+                            const tile = this.createTileElement(discard.tile, discard.riichi);
+                            if (idx === player.discards.length - 1) {
+                                tile.classList.add('highlight');
+                            }
+                            riverEl.appendChild(tile);
+                        });
+                    }
+                }
+            }
+
+            renderHand() {
+                const handEl = document.getElementById('handTiles');
+                handEl.innerHTML = '';
+
+                if (this.gameState.own_hand) {
+                    this.gameState.own_hand.forEach((tile) => {
+                        const tileEl = this.createTileElement(tile, false);
+                        tileEl.className = 'hand-tile';
+                        handEl.appendChild(tileEl);
+                    });
+                }
+
+                if (this.gameState.own_last_draw) {
+                    const lastDrawEl = this.createTileElement(this.gameState.own_last_draw, false);
+                    lastDrawEl.className = 'hand-tile';
+                    lastDrawEl.style.borderColor = '#10b981';
+                    handEl.appendChild(lastDrawEl);
+                }
+            }
+
+            renderInfo() {
+                document.getElementById('windInfo').textContent = this.gameState.bakaze || '-';
+                document.getElementById('roundInfo').textContent = `${this.gameState.kyoku || 1}`;
+                document.getElementById('doraInfo').textContent = this.gameState.dora_markers?.join(' ') || '-';
+                document.getElementById('drawsInfo').textContent = this.gameState.draws_remaining || '-';
+                document.getElementById('honbaInfo').textContent = this.gameState.honba || 0;
+                document.getElementById('kyotakuInfo').textContent = this.gameState.kyotaku || 0;
+            }
+
+            renderScores() {
+                if (!this.gameState.scores || !this.gameState.names) return;
+
+                for (let i = 0; i < 4; i++) {
+                    const scoreEl = document.getElementById(`score-${i}`);
+                    scoreEl.innerHTML = `
+                        <div class="info-label">${this.gameState.names[i]}</div>
+                        <div class="info-value">${this.gameState.scores[i]}</div>
+                    `;
+                }
+            }
+
+            renderOpponents() {
+                if (!this.gameState.players || !this.gameState.names) return;
+
+                for (let i = 1; i < 4; i++) {
+                    const opp = this.gameState.players[i];
+                    const oppEl = document.getElementById(`opponent-${i}`);
+                    const tileCount = opp.concealed_tile_count;
+                    const riichi = opp.riichi === 'accepted' ? '🚩 Riichi' : '';
+
+                    oppEl.innerHTML = `
+                        <div class="opponent-name">${this.gameState.names[i]} ${riichi}</div>
+                        <div class="opponent-stat">
+                            <span class="opponent-stat-label">Concealed</span>
+                            <span class="opponent-stat-value">${tileCount}</span>
+                        </div>
+                        <div class="opponent-stat">
+                            <span class="opponent-stat-label">Discards</span>
+                            <span class="opponent-stat-value">${opp.discards?.length || 0}</span>
+                        </div>
+                        <div class="opponent-stat">
+                            <span class="opponent-stat-label">Melds</span>
+                            <span class="opponent-stat-value">${opp.melds?.length || 0}</span>
+                        </div>
+                    `;
+                }
+            }
+
+            renderPredictions() {
+                const predEl = document.getElementById('predictions');
+                predEl.innerHTML = '';
+
+                if (!this.predictions || !this.predictions.top_3_actions) return;
+
+                this.predictions.top_3_actions.forEach((action) => {
+                    const percent = (action.probability * 100).toFixed(1);
+                    const item = document.createElement('div');
+                    item.className = 'prediction-item';
+                    item.innerHTML = `
+                        <div class="prediction-tile">${action.tile}</div>
+                        <div class="prediction-bar">
+                            <div class="prediction-fill" style="width: ${percent}%"></div>
+                        </div>
+                        <div class="prediction-percent">${percent}%</div>
+                    `;
+                    predEl.appendChild(item);
+                });
+            }
+
+            createTileElement(tile, riichi) {
+                const tileEl = document.createElement('div');
+                tileEl.className = 'tile';
+                if (riichi) tileEl.classList.add('riichi');
+                if (tile.includes('r')) tileEl.classList.add('red');
+
+                // Format tile display
+                const display = tile.replace('r', '');
+                tileEl.textContent = display;
+                return tileEl;
+            }
+        }
+
+        // Initialize viewer when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new GameViewer();
+        });
+    </script>
+</body>
+</html>
