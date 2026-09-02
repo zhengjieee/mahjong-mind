@@ -136,3 +136,34 @@ def test_step_mode_waits_for_advance(tmp_path: Path) -> None:
     replayer.stop()
     worker.join(timeout=2)
     assert not worker.is_alive()
+
+
+def test_replayer_can_publish_to_a_sink_instead_of_kafka(tmp_path: Path) -> None:
+    """A sink replaces the broker, which is how the deployed service replays.
+
+    With no Kafka to publish to, the same replay hands each event straight to
+    a callable, so the API service can process it in-process.
+    """
+    game_file = tmp_path / "sink_game.mjson"
+    events = [
+        '{"type":"start_game","names":["A","B","C","D"],"kyoku_first":0,"aka_flag":false}',
+        '{"type":"end_game"}',
+    ]
+
+    import gzip
+
+    with gzip.open(game_file, "wt") as f:
+        for event in events:
+            f.write(event + "\n")
+
+    received: list[dict] = []
+    replayer = HistoricalReplayer(sink=received.append)
+
+    # connect() must not reach for a broker when a sink is taking the events.
+    replayer.connect()
+    assert replayer.producer is None
+
+    replayer.replay_game(game_file, ReplayConfig(game_id="sink-game", replay_speed=0.0))
+
+    assert [r["event"]["type"] for r in received] == ["start_game", "end_game"]
+    assert {r["game_id"] for r in received} == {"sink-game"}

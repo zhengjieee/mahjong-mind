@@ -17,6 +17,9 @@ dependencies = [
     "uvicorn>=0.30.0",
 ]
 
+[tool.setuptools.package-data]
+mahjong_mind = ["api/static/*.html", "api/sample_games/*/*.mjson"]
+
 [tool.ruff.lint]
 ignore = ["UP040"]
 

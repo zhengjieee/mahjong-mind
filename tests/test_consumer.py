@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mahjong_mind.event_processing import seat_wind
 from mahjong_mind.kafka_events.consumer import GameStateConsumer
 
 
@@ -139,11 +140,11 @@ def test_consumer_logs_dahai_vs_prediction() -> None:
     }
 
     # Mock logger to verify logging
-    with patch("mahjong_mind.kafka_events.consumer.logger") as mock_logger:
+    with patch("mahjong_mind.event_processing.logger") as mock_logger:
         parsed_event = consumer._reconstruct_event(game_id, 3, dahai_event_dict)  # type: ignore[arg-type]
         from mahjong_mind.mjai.events import DahaiEvent
         assert isinstance(parsed_event.event, DahaiEvent)
-        consumer._handle_dahai(game_id, 3, parsed_event.event)
+        consumer.processor._handle_dahai(game_id, 3, parsed_event.event)
 
         # Verify log message includes the actual tile and prediction
         assert mock_logger.info.called
@@ -155,19 +156,19 @@ def test_consumer_logs_dahai_vs_prediction() -> None:
 def test_consumer_seat_wind_calculation() -> None:
     """Test seat wind calculation."""
     # Player 0 (dealer): seat wind E
-    assert GameStateConsumer._seat_wind(0, 0) == "E"
+    assert seat_wind(0, 0) == "E"
     # Player 1 (discard player): seat wind S
-    assert GameStateConsumer._seat_wind(1, 0) == "S"
+    assert seat_wind(1, 0) == "S"
     # Player 2: seat wind W
-    assert GameStateConsumer._seat_wind(2, 0) == "W"
+    assert seat_wind(2, 0) == "W"
     # Player 3: seat wind N
-    assert GameStateConsumer._seat_wind(3, 0) == "N"
+    assert seat_wind(3, 0) == "N"
 
     # With dealer = 1
-    assert GameStateConsumer._seat_wind(1, 1) == "E"
-    assert GameStateConsumer._seat_wind(2, 1) == "S"
-    assert GameStateConsumer._seat_wind(3, 1) == "W"
-    assert GameStateConsumer._seat_wind(0, 1) == "N"
+    assert seat_wind(1, 1) == "E"
+    assert seat_wind(2, 1) == "S"
+    assert seat_wind(3, 1) == "W"
+    assert seat_wind(0, 1) == "N"
 
 
 def test_consumer_sends_to_dlq_on_error() -> None:
@@ -200,7 +201,7 @@ def test_dahai_outcome_rides_the_predictions_topic() -> None:
     )
 
     event = DahaiEvent(type="dahai", actor=0, pai="1m", tsumogiri=False)
-    outcome = consumer._handle_dahai("g", 3, event)
+    outcome = consumer.processor._handle_dahai("g", 3, event)
 
     assert outcome is not None
     assert outcome["actual_tile"] == "1m"
@@ -275,8 +276,9 @@ def test_unexpected_error_does_not_kill_the_consumer() -> None:
 
     # A tehais list of the wrong shape fails inside the reconstructor rather
     # than in validation, which is the kind of surprise the DLQ is for.
-    with patch.object(
-        consumer, "_reconstruct_event", side_effect=TypeError("unexpected shape")
+    with patch(
+        "mahjong_mind.event_processing.parse_event",
+        side_effect=TypeError("unexpected shape"),
     ):
         consumer.process_event(
             {

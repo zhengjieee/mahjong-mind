@@ -1,40 +1,35 @@
-"""Kafka event consumer for game state reconstruction and inference."""
+"""Kafka transport around the shared game-event processor.
+
+This module owns everything Kafka: reading the raw event topic, publishing
+enriched records, and routing failures to the dead-letter queue. The work of
+rebuilding state and producing predictions lives in
+`mahjong_mind.event_processing`, which the deployed API service drives directly
+without a broker.
+"""
 
 import json
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from kafka import KafkaConsumer, KafkaProducer  # type: ignore[import-untyped]
 from kafka.errors import KafkaError  # type: ignore[import-untyped]
 
-from mahjong_mind.game_state.legal_actions import legal_discard_mask
-from mahjong_mind.game_state.player_observation import (
-    ObservationError,
-    PlayerObservation,
-    observation_for_player,
+from mahjong_mind.event_processing import (
+    GameEventProcessor,
+    PredictionResult,
+    parse_event,
 )
 from mahjong_mind.game_state.reconstructor import StateReconstructor
-from mahjong_mind.mjai.events import DahaiEvent, TsumoEvent
 from mahjong_mind.mjai.parser import ParsedEvent
+
+__all__ = ["GameStateConsumer", "PredictionResult", "main"]
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class PredictionResult:
-    """Cached prediction result from /recommend endpoint."""
-
-    game_id: str
-    event_index: int
-    actor: int
-    predicted_tiles: list[str]
-    predicted_probabilities: list[float]
-
-
 class GameStateConsumer:
-    """Consumes game events, reconstructs state, and calls inference API."""
+    """Consumes game events, runs the processor, and publishes the results."""
 
     TOPIC_GAME_EVENTS = "riichi.game-events"
     TOPIC_PREDICTIONS = "riichi.predictions"
@@ -59,14 +54,19 @@ class GameStateConsumer:
         self.producer: KafkaProducer | None = None
         self.http_client: httpx.Client | None = None
 
-        # Per-game-id reconstructors to maintain state
-        self.reconstructors: dict[str, StateReconstructor] = {}
+        # This stage reaches the model over HTTP; the API service runs the same
+        # processor with an in-process recommender instead.
+        self.processor = GameEventProcessor(self._request_recommendation)
 
-        # Cache predictions from TsumoEvent to DahaiEvent
-        self.pending_predictions: dict[str, PredictionResult] = {}
+    @property
+    def reconstructors(self) -> dict[str, StateReconstructor]:
+        """Per-game reconstructed state held by the processor."""
+        return self.processor.reconstructors
 
-        # Last acting player per game, for events that carry no actor
-        self.last_actor: dict[str, int] = {}
+    @property
+    def pending_predictions(self) -> dict[str, PredictionResult]:
+        """Recommendations awaiting the discard that resolves them."""
+        return self.processor.pending_predictions
 
     def connect(self) -> None:
         """Connect to Kafka and initialize HTTP client."""
@@ -115,67 +115,22 @@ class GameStateConsumer:
             raise
 
     def process_event(self, event_data: dict[str, Any]) -> None:
-        """Process a single Kafka event."""
+        """Process a single Kafka event and publish the enriched record."""
         game_id = event_data["game_id"]
         event_index = event_data["event_index"]
         event_dict = event_data["event"]
 
         try:
-            # A start_game means this game is beginning again, so any state
-            # from an earlier replay of the same id must be discarded. Without
-            # this, replaying a game twice in one session fails on every event
-            # because the reconstructor is still part-way through the first run.
-            if event_dict.get("type") == "start_game":
-                self._reset_game(game_id)
-
             # Kafka's own consumer-group offsets handle resume, so there is
             # nothing to skip beyond that.
-            if game_id not in self.reconstructors:
-                self.reconstructors[game_id] = StateReconstructor()
-
-            reconstructor = self.reconstructors[game_id]
-
-            # Reconstruct the event from dict
-            parsed_event = self._reconstruct_event(game_id, event_index, event_dict)
-
-            # Apply to state
-            state = reconstructor.apply(parsed_event)
-
-            # Whose perspective this event is seen from. Events like dora or
-            # end_kyoku carry no actor, so fall back to the last one seen.
-            actor = getattr(parsed_event.event, "actor", None)
-            if actor is None:
-                actor = self.last_actor.get(game_id, 0)
-            else:
-                self.last_actor[game_id] = actor
-
-            observation = self._observation_or_none(state, actor)
-
-            # Detect decision points and call inference API
-            recommendation: dict[str, Any] | None = None
-            outcome: dict[str, Any] | None = None
-            if isinstance(parsed_event.event, TsumoEvent) and observation is not None:
-                recommendation = self._handle_tsumo(game_id, event_index, observation)
-            elif isinstance(parsed_event.event, DahaiEvent):
-                outcome = self._handle_dahai(game_id, event_index, parsed_event.event)
-
-            # Publish the enriched event for the viewer and any other consumer
-            self._publish_enriched(
-                game_id, event_index, event_dict, observation, recommendation, outcome
-            )
-
+            record = self.processor.process(game_id, event_index, event_dict)
+            self._publish_enriched(game_id, event_index, record)
         except Exception as e:  # noqa: BLE001
             # Deliberately broad. The dead-letter queue exists so that one
             # unprocessable event cannot end the stream, and narrowing this
             # once let a TypeError kill the whole consumer.
             logger.error(f"Error processing {game_id} event {event_index}: {e}")
             self._send_to_dlq(game_id, event_index, event_dict, str(e))
-
-    def _reset_game(self, game_id: str) -> None:
-        """Forget everything held for one game, so it can be replayed again."""
-        self.reconstructors.pop(game_id, None)
-        self.pending_predictions.pop(game_id, None)
-        self.last_actor.pop(game_id, None)
 
     def _reconstruct_event(
         self,
@@ -184,248 +139,27 @@ class GameStateConsumer:
         event_dict: dict[str, Any],
     ) -> ParsedEvent:
         """Convert a Kafka event dict back to ParsedEvent."""
-        event_type = event_dict.get("type")
+        return parse_event(game_id, event_index, event_dict)
 
-        # Map event type to class
-        event_classes = {
-            "start_game": "StartGameEvent",
-            "start_kyoku": "StartKyokuEvent",
-            "tsumo": "TsumoEvent",
-            "dahai": "DahaiEvent",
-            "chi": "ChiEvent",
-            "pon": "PonEvent",
-            "daiminkan": "DaiminkanEvent",
-            "ankan": "AnkanEvent",
-            "kakan": "KakanEvent",
-            "dora": "DoraEvent",
-            "reach": "ReachEvent",
-            "reach_accepted": "ReachAcceptedEvent",
-            "hora": "HoraEvent",
-            "ryukyoku": "RyukyokuEvent",
-            "end_kyoku": "EndKyokuEvent",
-            "end_game": "EndGameEvent",
-        }
-
-        if event_type not in event_classes:
-            raise ValueError(f"Unknown event type: {event_type}")
-
-        # Dynamically import the event class
-        from mahjong_mind.mjai import events as events_module
-
-        event_class = getattr(events_module, event_classes[event_type])
-        event_obj = event_class(**event_dict)
-
-        return ParsedEvent(
-            match_id=game_id,
-            event_index=event_index,
-            event=event_obj,
-        )
-
-    def _handle_tsumo(
-        self,
-        game_id: str,
-        event_index: int,
-        observation: PlayerObservation,
-    ) -> dict[str, Any] | None:
-        """Handle a draw event: call /recommend API and return its response."""
+    def _request_recommendation(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        """Fulfil one recommendation request over HTTP."""
         if not self.http_client:
             raise RuntimeError("HTTP client not initialized; call connect() first")
 
-        actor = observation.observer
-
-        # Compute turn index: how many discards has this player made?
-        actor_turn_index = len(observation.players[actor].discards)
-
-        # Compute seat wind
-        seat_wind = self._seat_wind(actor, observation.dealer)
-
-        # Get legal discard mask and identify which tile indices are legal
-        mask = legal_discard_mask(observation)
-
         try:
-            # Call /recommend API
-            request_data = {
-                "match_id": observation.match_id,
-                "observer": actor,
-                "names": list(observation.names),
-                "aka_flag": observation.aka_flag,
-                "hand_index": observation.hand_index,
-                "bakaze": observation.bakaze,
-                "kyoku": observation.kyoku,
-                "honba": observation.honba,
-                "kyotaku": observation.kyotaku,
-                "dealer": observation.dealer,
-                "scores": list(observation.scores),
-                "dora_markers": list(observation.dora_markers),
-                "draws_remaining": observation.draws_remaining,
-                "hand_ended": observation.hand_ended,
-                "own_hand": list(observation.own_hand),
-                "own_last_draw": observation.own_last_draw,
-                "players": [
-                    {
-                        "concealed_tile_count": p.concealed_tile_count,
-                        "discards": [
-                            {
-                                "tile": d.tile,
-                                "tsumogiri": d.tsumogiri,
-                                "riichi": d.riichi,
-                                "called": d.called,
-                            }
-                            for d in p.discards
-                        ],
-                        "melds": [
-                            {
-                                "type": m.type,
-                                "tiles": list(m.tiles),
-                                "called_tile": m.called_tile,
-                                "source": m.target,
-                            }
-                            for m in p.melds
-                        ],
-                        "riichi": p.riichi,
-                    }
-                    for p in observation.players
-                ],
-                "actor_turn_index": actor_turn_index,
-                "seat_wind": seat_wind,
-                "legal_discard_mask": list(mask),
-                "label_index": None,
-            }
-
-            response = self.http_client.post("/recommend", json=request_data)
+            response = self.http_client.post("/recommend", json=request)
             response.raise_for_status()
-            result = response.json()
-
-            # Extract top predictions
-            top_3 = result.get("top_3_actions", [])
-            predicted_tiles = [a["tile"] for a in top_3]
-            predicted_probs = [a["probability"] for a in top_3]
-
-            # Cache prediction
-            prediction = PredictionResult(
-                game_id=game_id,
-                event_index=event_index,
-                actor=actor,
-                predicted_tiles=predicted_tiles,
-                predicted_probabilities=predicted_probs,
-            )
-            self.pending_predictions[game_id] = prediction
-
-            logger.debug(
-                f"Game {game_id} event {event_index}: predicted {predicted_tiles} "
-                f"for player {actor}"
-            )
-
-            return dict(result)
-
-        except (httpx.HTTPError, ValueError, RuntimeError) as e:
-            logger.error(f"Failed to get prediction for {game_id} event {event_index}: {e}")
-            # Don't send to DLQ for API errors; they may be transient
+            return dict(response.json())
+        except (httpx.HTTPError, ValueError) as e:
+            logger.error(f"Failed to get a recommendation: {e}")
+            # Don't send to DLQ for API errors; they may be transient.
             return None
-
-    def _handle_dahai(
-        self,
-        game_id: str,
-        event_index: int,
-        event: DahaiEvent,
-    ) -> dict[str, Any] | None:
-        """Handle a discard event: resolve the prediction against what happened."""
-        # Lookup the cached prediction from the previous TsumoEvent
-        if game_id not in self.pending_predictions:
-            logger.debug(f"No pending prediction for {game_id}")
-            return None
-
-        prediction = self.pending_predictions[game_id]
-
-        # The actual discard
-        actual_tile = event.pai
-
-        # Did the model predict correctly?
-        correct = actual_tile in prediction.predicted_tiles
-        rank = prediction.predicted_tiles.index(actual_tile) + 1 if correct else None
-
-        logger.info(
-            f"Game {game_id} event {event_index}: player {event.actor} discarded {actual_tile} "
-            f"(predicted: {prediction.predicted_tiles}, rank: {rank})"
-        )
-
-        # Clean up
-        del self.pending_predictions[game_id]
-
-        return {
-            "actor": event.actor,
-            "actual_tile": actual_tile,
-            "predicted_tiles": prediction.predicted_tiles,
-            "rank": rank,
-            "top_1": rank == 1,
-            "top_3": correct,
-        }
-
-    @staticmethod
-    def _observation_or_none(state: Any, actor: int) -> PlayerObservation | None:
-        """Build an observation, or None before the first hand has started."""
-        if state.current_hand is None:
-            return None
-        try:
-            return observation_for_player(state, actor)
-        except ObservationError:
-            return None
-
-    @staticmethod
-    def _observation_payload(observation: PlayerObservation) -> dict[str, Any]:
-        """Serialise an observation into the shape the live viewer renders."""
-        return {
-            "match_id": observation.match_id,
-            "observer": observation.observer,
-            "names": list(observation.names),
-            "aka_flag": observation.aka_flag,
-            "hand_index": observation.hand_index,
-            "bakaze": observation.bakaze,
-            "kyoku": observation.kyoku,
-            "honba": observation.honba,
-            "kyotaku": observation.kyotaku,
-            "dealer": observation.dealer,
-            "scores": list(observation.scores),
-            "dora_markers": list(observation.dora_markers),
-            "draws_remaining": observation.draws_remaining,
-            "hand_ended": observation.hand_ended,
-            "own_hand": list(observation.own_hand),
-            "own_last_draw": observation.own_last_draw,
-            "players": [
-                {
-                    "concealed_tile_count": p.concealed_tile_count,
-                    "discards": [
-                        {
-                            "tile": d.tile,
-                            "tsumogiri": d.tsumogiri,
-                            "riichi": d.riichi,
-                            "called": d.called,
-                        }
-                        for d in p.discards
-                    ],
-                    "melds": [
-                        {
-                            "type": m.type,
-                            "tiles": list(m.tiles),
-                            "called_tile": m.called_tile,
-                            "source": m.target,
-                        }
-                        for m in p.melds
-                    ],
-                    "riichi": p.riichi,
-                }
-                for p in observation.players
-            ],
-        }
 
     def _publish_enriched(
         self,
         game_id: str,
         event_index: int,
-        event_dict: dict[str, Any],
-        observation: PlayerObservation | None,
-        recommendation: dict[str, Any] | None,
-        outcome: dict[str, Any] | None,
+        record: dict[str, Any],
     ) -> None:
         """Publish the event enriched with state and prediction.
 
@@ -436,31 +170,13 @@ class GameStateConsumer:
         if not self.producer:
             return
 
-        payload = {
-            "game_id": game_id,
-            "event_index": event_index,
-            "event": event_dict,
-            "observation": (
-                self._observation_payload(observation) if observation else None
-            ),
-            "recommendations": recommendation,
-            "outcome": outcome,
-        }
-
         try:
             self.producer.send(
-                self.TOPIC_PREDICTIONS, key=game_id.encode("utf-8"), value=payload
+                self.TOPIC_PREDICTIONS, key=game_id.encode("utf-8"), value=record
             )
         except (KafkaError, OSError, ValueError) as e:
             # Downstream readers are optional; never break event processing.
             logger.warning(f"Failed to publish {game_id} event {event_index}: {e}")
-
-    @staticmethod
-    def _seat_wind(player_id: int, dealer: int) -> str:
-        """Compute seat wind for a player given the dealer."""
-        winds = ("E", "S", "W", "N")
-        offset = (player_id - dealer) % 4
-        return winds[offset]
 
     def _send_to_dlq(
         self,

@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import os
+import socket
 import threading
 import time
 import uuid
@@ -19,6 +21,7 @@ from kafka import KafkaConsumer  # type: ignore[import-untyped]
 from kafka.errors import KafkaError  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field
 
+from mahjong_mind.event_processing import GameEventProcessor
 from mahjong_mind.game_state.legal_actions import DISCARD_TILE_TYPES
 from mahjong_mind.kafka_events.replayer import HistoricalReplayer, ReplayConfig
 from mahjong_mind.modelling.models.transformer_model import (
@@ -285,10 +288,35 @@ async def startup_event() -> None:
     _service = load_service(checkpoint_path, model_version="transformer-epoch-10")
     logger.info("Model loaded successfully")
 
-    _start_predictions_reader(asyncio.get_running_loop())
+    global _event_loop
+    _event_loop = asyncio.get_running_loop()
+    if broker_reachable():
+        _start_predictions_reader(_event_loop)
+    else:
+        logger.info("No Kafka broker; replays will run in-process")
 
 
 TOPIC_PREDICTIONS = "riichi.predictions"
+
+KAFKA_BOOTSTRAP = os.environ.get("MAHJONG_MIND_KAFKA", "localhost:9092")
+
+# The loop worker threads hand their broadcasts back to.
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def broker_reachable(timeout: float = 0.3) -> bool:
+    """Whether a Kafka broker is listening, decided by a plain TCP probe.
+
+    kafka-python retries an unreachable bootstrap server indefinitely rather
+    than failing, so asking it is not a usable signal: it hangs the caller. A
+    deployed instance has no broker at all and takes the in-process path.
+    """
+    host, _, port = KAFKA_BOOTSTRAP.partition(":")
+    try:
+        with socket.create_connection((host, int(port or "9092")), timeout=timeout):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 def _start_predictions_reader(loop: asyncio.AbstractEventLoop) -> None:
@@ -308,7 +336,7 @@ def _start_predictions_reader(loop: asyncio.AbstractEventLoop) -> None:
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             )
         except (KafkaError, OSError) as e:
-            # The viewer still serves pages and /recommend without Kafka.
+            # The viewer still serves pages and /recommend without live updates.
             logger.warning(f"Live updates unavailable, could not reach Kafka: {e}")
             return
 
@@ -338,13 +366,11 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/recommend")
-async def recommend(request: PlayerObservationRequest) -> DiscarRecommendation:
-    """
-    Rank legal discard actions for the given game state.
+def run_inference(request: PlayerObservationRequest) -> DiscarRecommendation:
+    """Rank legal discard actions for the given game state.
 
-    Input: PlayerObservationRequest (complete observable game state)
-    Output: DiscarRecommendation (top-3 discard actions with probabilities)
+    Shared by the HTTP endpoint and by the in-process pipeline the service
+    runs when no Kafka broker is available.
     """
     if _service is None:
         raise RuntimeError("Service not initialised; startup failed")
@@ -434,6 +460,50 @@ async def recommend(request: PlayerObservationRequest) -> DiscarRecommendation:
     )
 
 
+@app.post("/recommend")
+async def recommend(request: PlayerObservationRequest) -> DiscarRecommendation:
+    """Rank legal discard actions for the given observable game state."""
+    return run_inference(request)
+
+
+# In-process pipeline, used when there is no broker to carry events.
+
+
+_processor: GameEventProcessor | None = None
+
+
+def _local_recommendation(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Fulfil a recommendation request in this process, without HTTP."""
+    return run_inference(PlayerObservationRequest(**payload)).model_dump()
+
+
+def _direct_sink(event_payload: dict[str, Any]) -> None:
+    """Process one replayed event here and push the result to the viewer.
+
+    This is the deployed path. It does the same work the Kafka consumer does,
+    through the same processor, with the broker and the predictions topic
+    replaced by a direct call and a WebSocket push.
+    """
+    global _processor
+    if _processor is None:
+        _processor = GameEventProcessor(_local_recommendation)
+
+    game_id = event_payload["game_id"]
+    try:
+        record = _processor.process(
+            game_id, event_payload["event_index"], event_payload["event"]
+        )
+    except Exception as e:  # noqa: BLE001
+        # Matches the consumer's dead-letter behaviour: one unprocessable
+        # event must not end the replay. There is no DLQ here, so it is logged.
+        logger.error(f"Error processing {game_id} event {event_payload['event_index']}: {e}")
+        return
+
+    _broadcaster.record_activity(game_id, str(record["event"].get("type", "")))
+    if _event_loop is not None:
+        asyncio.run_coroutine_threadsafe(_broadcaster.broadcast(record), _event_loop)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for live game updates.
@@ -470,7 +540,17 @@ async def publish_event(request: GameEventPublish) -> dict[str, str]:
     return {"status": "published"}
 
 
-DATA_DIRECTORY = Path(__file__).parent.parent.parent.parent / "data" / "raw"
+# Games come from the full local corpus when it is present, and from the small
+# bundled sample otherwise -- which is what a deployed instance serves, since
+# the raw archive is far too large to ship and is not committed. Setting
+# MAHJONG_MIND_GAMES_DIR forces one or the other, so the deployed behaviour can
+# be exercised locally.
+BUNDLED_GAMES_DIRECTORY = Path(__file__).parent / "sample_games"
+_RAW_DIRECTORY = Path(__file__).parent.parent.parent.parent / "data" / "raw"
+DATA_DIRECTORY = Path(
+    os.environ.get("MAHJONG_MIND_GAMES_DIR")
+    or (_RAW_DIRECTORY if _RAW_DIRECTORY.is_dir() else BUNDLED_GAMES_DIRECTORY)
+)
 
 
 # 2009 was the parser and pipeline development corpus, and no model was
@@ -530,7 +610,7 @@ _active_replays: dict[str, HistoricalReplayer] = {}
 def _replay_worker(
     game_id: str, game_path: Path, replayer: HistoricalReplayer, config: ReplayConfig
 ) -> None:
-    """Replay one game into Kafka. Runs on a worker thread."""
+    """Replay one game into Kafka, or in-process. Runs on a worker thread."""
     try:
         replayer.connect()
         replayer.replay_game(game_path, config)
@@ -575,7 +655,12 @@ async def watch_game(request: WatchRequest) -> dict[str, Any]:
         _broadcaster.forget_game(other_id)
         logger.info(f"Stopped {other_id} to make way for {game_id}")
 
-    replayer = HistoricalReplayer()
+    # Probed per replay rather than cached, so stopping or starting the broker
+    # takes effect without restarting the service.
+    replayer = HistoricalReplayer(
+        kafka_brokers=KAFKA_BOOTSTRAP,
+        sink=None if broker_reachable() else _direct_sink,
+    )
     config = ReplayConfig(
         game_id=game_id, replay_speed=request.speed, step_mode=request.step_mode
     )
@@ -623,4 +708,10 @@ async def stop_game(request: GameControl) -> dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Without this the service's own log lines are dropped, which hides both
+    # the model load and the choice between the Kafka and in-process paths.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    # Bind every interface on the port the platform assigns: Cloud Run and
+    # most other hosts route to $PORT, and reach the container from outside.
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))

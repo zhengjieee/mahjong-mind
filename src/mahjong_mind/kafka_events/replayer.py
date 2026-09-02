@@ -3,7 +3,7 @@
 import json
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,11 +29,20 @@ class HistoricalReplayer:
 
     TOPIC_GAME_EVENTS = "riichi.game-events"
 
-    def __init__(self, kafka_brokers: list[str] | str = "localhost:9092"):
-        """Initialize replayer with Kafka connection."""
+    def __init__(
+        self,
+        kafka_brokers: list[str] | str = "localhost:9092",
+        sink: Callable[[dict], None] | None = None,
+    ):
+        """Initialize replayer, publishing to Kafka or to a given sink.
+
+        A sink replaces the broker entirely, which is how the deployed service
+        replays games with no Kafka available.
+        """
         if isinstance(kafka_brokers, str):
             kafka_brokers = [kafka_brokers]
         self.kafka_brokers = kafka_brokers
+        self.sink = sink
         self.producer: KafkaProducer | None = None
         self._paused = False
         self._stopped = False
@@ -45,7 +54,9 @@ class HistoricalReplayer:
         self.step_mode = False
 
     def connect(self) -> None:
-        """Connect to Kafka."""
+        """Connect to Kafka, unless a sink is already taking the events."""
+        if self.sink is not None:
+            return
         self.producer = KafkaProducer(
             bootstrap_servers=self.kafka_brokers,
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -64,7 +75,7 @@ class HistoricalReplayer:
         config: ReplayConfig,
     ) -> None:
         """Replay a single game to Kafka."""
-        if not self.producer:
+        if not self.producer and self.sink is None:
             raise RuntimeError("Not connected to Kafka; call connect() first")
 
         self.step_mode = config.step_mode
@@ -89,11 +100,9 @@ class HistoricalReplayer:
                 if self._stopped:
                     break
 
-            # Publish event to Kafka with game_id as key
-            self.producer.send(
-                self.TOPIC_GAME_EVENTS,
-                key=config.game_id.encode("utf-8"),
-                value={
+            self._emit(
+                config.game_id,
+                {
                     "game_id": config.game_id,
                     "event_index": parsed.event_index,
                     "event": parsed.event.model_dump(),
@@ -108,7 +117,19 @@ class HistoricalReplayer:
                 delay = 0.5 / config.replay_speed
                 time.sleep(delay)
 
-        self.producer.flush()
+        if self.producer:
+            self.producer.flush()
+
+    def _emit(self, game_id: str, payload: dict) -> None:
+        """Hand one event to whichever transport this replay is using."""
+        if self.sink is not None:
+            self.sink(payload)
+        elif self.producer:
+            self.producer.send(
+                self.TOPIC_GAME_EVENTS,
+                key=game_id.encode("utf-8"),
+                value=payload,
+            )
 
     def pause(self) -> None:
         """Pause replay."""
