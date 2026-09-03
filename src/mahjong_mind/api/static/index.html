@@ -489,25 +489,54 @@
                 this.stepMode = true;
                 this.paused = false;
                 this.playing = new Map();
+                this.reconnectAttempts = 0;
 
-                this.connect();
+                // The socket is opened only while a game is being watched. An
+                // open connection is a request in flight for as long as it
+                // lasts, so an idle page must not hold one.
                 this.initPicker();
             }
 
             // --- connection -------------------------------------------------
 
             connect() {
+                if (this.ws && (this.ws.readyState === WebSocket.OPEN
+                    || this.ws.readyState === WebSocket.CONNECTING)) return;
+
                 const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
                 this.ws = new WebSocket(`${scheme}//${location.host}/ws`);
                 this.ws.onopen = () => {
+                    this.reconnectAttempts = 0;
                     this.setStatus('connected', 'Connected');
                     if (this.watching) this.subscribe(this.watching);
                 };
                 this.ws.onmessage = (e) => this.onMessage(e);
                 this.ws.onclose = () => {
+                    this.ws = null;
+                    // Retrying forever would keep an instance busy indefinitely
+                    // behind a forgotten tab, so only a visible page that is
+                    // actually watching something reconnects, and not for ever.
+                    const shouldRetry = this.watching
+                        && document.visibilityState === 'visible'
+                        && this.reconnectAttempts < 5;
+                    if (!shouldRetry) {
+                        this.setStatus('', 'Disconnected');
+                        return;
+                    }
+                    this.reconnectAttempts += 1;
                     this.setStatus('', 'Disconnected — retrying');
                     setTimeout(() => this.connect(), 3000);
                 };
+            }
+
+            closeSocket() {
+                if (!this.ws) return;
+                const ws = this.ws;
+                this.ws = null;
+                // Drop the handler first, or closing triggers a reconnect.
+                ws.onclose = null;
+                ws.close();
+                this.setStatus('', 'Disconnected');
             }
 
             subscribe(gameId) {
@@ -718,6 +747,15 @@
                 document.getElementById('pauseBtn')
                     .addEventListener('click', () => this.togglePause());
 
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'hidden') {
+                        this.closeSocket();
+                    } else if (this.watching) {
+                        this.reconnectAttempts = 0;
+                        this.connect();
+                    }
+                });
+
                 this.refreshGames();
                 setInterval(() => this.refreshLive(), 4000);
             }
@@ -778,6 +816,8 @@
 
             watch(gameId) {
                 this.watching = gameId;
+                this.reconnectAttempts = 0;
+                this.connect();
                 this.state = null;
                 this.predictions = null;
                 this.lastOutcome = null;
@@ -872,6 +912,8 @@
 
             async stop() {
                 await this.control('/api/stop');
+                this.watching = null;
+                this.closeSocket();
                 this.hideTransport();
                 document.getElementById('waiting').style.display = '';
                 document.getElementById('waiting').textContent = 'Stopped. Pick another game.';
