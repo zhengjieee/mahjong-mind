@@ -154,7 +154,7 @@ def test_starting_a_game_stops_any_other() -> None:
         # A real game id, so the replay actually starts.
         response = client.post(
             "/api/watch",
-            json={"game_id": "2017011403gm-00a9-0000-ec687b95", "step_mode": True},
+            json={"game_id": "2018010100gm-00a9-0000-0d318262", "step_mode": True},
         )
         if response.status_code == 404:
             import pytest

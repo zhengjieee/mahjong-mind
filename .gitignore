@@ -222,4 +222,12 @@ data/raw/
 data/processed/
 
 # Trained model checkpoints
-data/checkpoints/
+# Excluding the contents rather than the directory itself: git will not look
+# inside an excluded directory, so a negation below could never take effect.
+data/checkpoints/*
+!data/checkpoints/transformer_model/
+data/checkpoints/transformer_model/*
+# The weights actually served. At 1.7 MB they version alongside the code that
+# serves them, which is what makes a deploy reproducible: CI builds the image
+# from the repository alone.
+!data/checkpoints/transformer_model/epoch-10.pt

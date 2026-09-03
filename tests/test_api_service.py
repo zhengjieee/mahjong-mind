@@ -12,13 +12,21 @@ from mahjong_mind.api.service import app
 @pytest.fixture
 def client():
     """FastAPI test client with loaded model."""
-    # Manually load the service for testing.
-    checkpoint_path = (
+    # Prefer the trained weights when a local checkout has them. CI has none,
+    # and skipping there left the request path untested -- which is exactly
+    # where both /recommend bugs lived. A tiny untrained fixture stands in:
+    # the point is that the path works, not what it predicts.
+    trained = (
         Path(__file__).parent.parent / "data" / "checkpoints" / "transformer_model" / "epoch-10.pt"
     )
-    if not checkpoint_path.exists():
-        pytest.skip("Checkpoint not available (expected in CI)")
-    service_module._service = service_module.load_service(checkpoint_path, model_version="transformer-epoch-10")
+    checkpoint_path = (
+        trained
+        if trained.exists()
+        else Path(__file__).parent / "fixtures" / "untrained-transformer.pt"
+    )
+    service_module._service = service_module.load_service(
+        checkpoint_path, model_version="transformer-epoch-10"
+    )
 
     return TestClient(app)
 
