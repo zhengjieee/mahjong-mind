@@ -1,0 +1,21 @@
+# The raw archives and generated Parquet run to many gigabytes; sending them
+# to the daemon as build context would dwarf the image itself.
+data/raw
+data/processed
+data/manifests
+
+# Only the served checkpoint ships. The MLP and the transformer's other epochs
+# stay out.
+data/checkpoints/mlp_baseline
+data/checkpoints/transformer_model/epoch-?.pt
+
+.git
+.github
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+**/__pycache__
+tests
+docs
+docker-compose.yml

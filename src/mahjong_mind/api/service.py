@@ -282,7 +282,7 @@ if static_dir.exists():
 async def startup_event() -> None:
     """Load the model and start consuming enriched events."""
     global _service
-    checkpoint_path = Path(__file__).parent.parent.parent.parent / "data" / "checkpoints" / "transformer_model" / "epoch-10.pt"
+    checkpoint_path = CHECKPOINT_PATH
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     _service = load_service(checkpoint_path, model_version="transformer-epoch-10")
@@ -299,6 +299,18 @@ async def startup_event() -> None:
 TOPIC_PREDICTIONS = "riichi.predictions"
 
 KAFKA_BOOTSTRAP = os.environ.get("MAHJONG_MIND_KAFKA", "localhost:9092")
+
+# The served checkpoint. Repo-relative by default, which is where a local
+# checkout keeps it; an installed copy has no repo around it, so the image
+# points this at the weights it ships with.
+CHECKPOINT_PATH = Path(
+    os.environ.get("MAHJONG_MIND_CHECKPOINT")
+    or Path(__file__).parent.parent.parent.parent
+    / "data"
+    / "checkpoints"
+    / "transformer_model"
+    / "epoch-10.pt"
+)
 
 # The loop worker threads hand their broadcasts back to.
 _event_loop: asyncio.AbstractEventLoop | None = None
