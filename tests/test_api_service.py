@@ -24,18 +24,27 @@ def client():
         if trained.exists()
         else Path(__file__).parent / "fixtures" / "untrained-transformer.pt"
     )
-    service_module._service = service_module.load_service(
-        checkpoint_path, model_version="transformer-epoch-10"
-    )
+    service_module._service = service_module.load_service(checkpoint_path)
+    # Handed to the test so it can check the service reports what it loaded.
+    app.state.checkpoint_path = checkpoint_path
 
     return TestClient(app)
 
 
 def test_health_endpoint(client):
-    """GET /health returns 200."""
+    """GET /health reports liveness and the weights actually loaded.
+
+    The version is derived from the checkpoint's contents rather than written
+    down, so serving a different file cannot keep reporting the old name.
+    """
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["model_version"] == service_module.checkpoint_identity(
+        app.state.checkpoint_path
+    )
 
 
 def test_recommend_endpoint_basic(client):

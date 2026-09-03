@@ -1,6 +1,7 @@
 """FastAPI inference service for discard recommendations."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -240,8 +241,26 @@ class GameEventBroadcaster:
 _broadcaster = GameEventBroadcaster()
 
 
-def load_service(checkpoint_path: Path, model_version: str) -> InferenceService:
-    """Load model checkpoint and create inference service."""
+def checkpoint_identity(checkpoint_path: Path) -> str:
+    """A verifiable name for the served weights: file name plus content hash.
+
+    A hardcoded version string keeps claiming the same model no matter which
+    file is actually loaded. Hashing the bytes cannot: swap the checkpoint and
+    the reported identity changes with it.
+    """
+    digest = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()[:8]
+    return f"{checkpoint_path.stem}@{digest}"
+
+
+def load_service(
+    checkpoint_path: Path, model_version: str | None = None
+) -> InferenceService:
+    """Load model checkpoint and create inference service.
+
+    The version is derived from the checkpoint itself unless one is given.
+    """
+    if model_version is None:
+        model_version = checkpoint_identity(checkpoint_path)
     checkpoint = torch.load(checkpoint_path, weights_only=False)
     model = DiscardTransformer(
         d_model=checkpoint["d_model"],
@@ -285,8 +304,8 @@ async def startup_event() -> None:
     checkpoint_path = CHECKPOINT_PATH
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    _service = load_service(checkpoint_path, model_version="transformer-epoch-10")
-    logger.info("Model loaded successfully")
+    _service = load_service(checkpoint_path)
+    logger.info(f"Model loaded: {_service.model_version} from {checkpoint_path}")
 
     global _event_loop
     _event_loop = asyncio.get_running_loop()
@@ -374,8 +393,11 @@ async def root() -> HTMLResponse:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    """Liveness check."""
-    return {"status": "ok"}
+    """Liveness check, naming the weights this instance actually loaded."""
+    return {
+        "status": "ok",
+        "model_version": _service.model_version if _service else "not loaded",
+    }
 
 
 def run_inference(request: PlayerObservationRequest) -> DiscarRecommendation:
